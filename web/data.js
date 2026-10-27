@@ -621,9 +621,11 @@ var Data = (function () {
     }
   }
 
-  /** This hour's watchlist cards: films included or free on the TV's apps first, then the rest. */
+  var WATCHLIST_CARDS = 30;
+
+  /** This hour's watchlist posters: films included or free on the TV's apps first, then the rest. */
   function watchlistNow() {
-    var ready = films.filter(function (f) { return f.detailed && f.backdrop; }), n = Prefs.cards();
+    var ready = films.filter(function (f) { return f.detailed && (f.poster || f.backdrop); }), n = WATCHLIST_CARDS;
     var included = ready.filter(function (f) { return f.app && !f.paid && usable(f.app); });
     var rest = ready.filter(function (f) { return included.indexOf(f) < 0; });
     var out = [], seen = {};

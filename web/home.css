@@ -259,6 +259,22 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .card .badge img { position: absolute; left: 50%; top: 50%; max-width: 76%; max-height: 62%; -webkit-transform: translate(-50%, -50%); transform: translate(-50%, -50%); }
 .card .badge img.logo { width: 72%; height: 52%; max-width: none; max-height: none; object-fit: contain; }
 .card .badge .word { position: absolute; left: 3px; right: 3px; top: 50%; margin-top: -7px; line-height: 14px; text-align: center; font-weight: 700; white-space: nowrap; overflow: hidden; color: #FFF; }
+.posters .card {
+  top: 282px;
+  height: 324px;
+  -webkit-transition: -webkit-transform 0.34s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.34s ease-out;
+  transition: transform 0.34s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.34s ease-out;
+}
+.posters .card.enter { opacity: 0; -webkit-transform: translateY(28px); transform: translateY(28px); }
+.posters .card.focus { -webkit-transform: scale(1.14); transform: scale(1.14); }
+.posters .card .img { border-radius: 14px; }
+.posters .card .img::after { border-radius: 14px; }
+.posters .card .name { top: 352px; font-size: 24px; font-weight: 500; color: #3A3A3C; }
+.posters .card.focus .name { color: #1D1D1F; font-weight: 600; }
+.posters .card .meta { top: 386px; max-width: none; font-size: 21px; }
+.posters .card.focus .meta { opacity: 1; }
+.night.posters .card .name { color: rgba(245, 245, 247, 0.72); }
+.night.posters .card.focus .name { color: #F5F5F7; }
 .card.off .img { -webkit-filter: grayscale(1); filter: grayscale(1); opacity: 0.45; }
 .card.off .name { opacity: 0.55; }
 .card .img::after {

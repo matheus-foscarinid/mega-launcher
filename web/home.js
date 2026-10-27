@@ -414,9 +414,10 @@
   // MARK: - Picks and background
 
   function renderCards() {
-    var list = Data.picks(TAB_KIND[st.tab]);
+    var list = Data.picks(TAB_KIND[st.tab]), posters = TAB_KIND[st.tab] === 'watchlist';
     var holder = $('cards');
     setClass(body, 'no-picks', !list.length);
+    setClass(body, 'posters', posters);
     setClass(body, 'no-key', !Data.hasKey());   // as on Android: no title or tabs that could never show anything
     if (!Data.hasKey() && st.zone === Z.TOP && st.top < TABS) st.top = TABS;
     var same = list.length === cards.length;
@@ -425,12 +426,15 @@
     cards = list;
     holder.innerHTML = '';
     for (var c = 0; c < list.length; c++) {
-      var p = list[c], card = el('div', 'card', holder);
+      var p = list[c], card = el('div', 'card' + (posters ? ' enter' : ''), holder);
       var img = el('div', 'img', card);
       // Narrow: the poster (the backdrop cropped without one); the wide card fades its backdrop in over it, loaded then.
+      // The watchlist's posters load as they come into view (layoutCards), large enough to stay sharp when focused.
       var poster = el('div', 'layer', img);
-      poster.style.backgroundImage = 'url(' + (p.poster ? Data.image(p.poster, 'w342') : Data.image(p.backdrop, 'w780')) + ')';
+      if (posters) card.setAttribute('data-poster', p.poster ? Data.image(p.poster, 'w500') : Data.image(p.backdrop, 'w780'));
+      else poster.style.backgroundImage = 'url(' + (p.poster ? Data.image(p.poster, 'w342') : Data.image(p.backdrop, 'w780')) + ')';
       el('div', 'layer back', img);
+      if (posters && c < POSTERS_VISIBLE) card.style.webkitTransitionDelay = card.style.transitionDelay = c * 45 + 'ms';
       var app = Data.usable(p.app) ? Data.appFor(p.app) : null;
       if (app) face(app, el('div', 'badge', img), app.title.length > 8 ? 8 : 11);
       else card.className += ' off';
@@ -440,8 +444,19 @@
     }
     st.card = Math.min(st.card, Math.max(0, list.length - 1));
     if (!list.length && st.zone === Z.CARDS) st.zone = Z.SHELF;
-    backdrop(list.length ? Data.image(list[0].backdrop, 'w300') : '');
+    backdrop(list.length ? Data.image(list[posters ? st.card : 0].backdrop, 'w300') : '');
     updateFocus();
+    if (posters) revealPosters(holder);
+  }
+
+  /** The posters rise in one after another, then lose their delays so focus moves at once. */
+  function revealPosters(holder) {
+    setTimeout(function () {
+      for (var i = 0; i < holder.children.length; i++) setClass(holder.children[i], 'enter', false);
+      setTimeout(function () {
+        for (var j = 0; j < holder.children.length; j++) holder.children[j].style.webkitTransitionDelay = holder.children[j].style.transitionDelay = '';
+      }, 900);
+    }, 30);
   }
 
   /**
@@ -450,6 +465,7 @@
    * transform and the backdrop's opacity animate: the widths change at once (older TVs).
    */
   function layoutCards() {
+    if (TAB_KIND[st.tab] === 'watchlist') { layoutPosters(); return; }
     var holder = $('cards'), nodes = holder.children, left = 80, scroll = Math.max(0, st.card - 2) * 360;
     for (var i = 0; i < nodes.length; i++) {
       var wide = i === st.card, w = wide ? 1040 : 320, n = nodes[i], at = left - scroll;
@@ -464,6 +480,31 @@
       left += w + 40;
     }
     holder.style.webkitTransform = holder.style.transform = 'translateX(' + (-scroll) + 'px)';
+  }
+
+  var POSTER_W = 216, POSTER_GAP = 34, POSTERS_VISIBLE = 7;
+
+  /**
+   * The watchlist: one row of posters at the same size, the focused one scaled up (never resized, so it isn't
+   * stretched). The row slides to keep focus near the middle, and the background follows the focused film.
+   */
+  function layoutPosters() {
+    var holder = $('cards'), nodes = holder.children, step = POSTER_W + POSTER_GAP;
+    var last = Math.max(0, nodes.length - POSTERS_VISIBLE), first = Math.max(0, Math.min(last, st.card - 3)), scroll = first * step;
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i], at = 80 + i * step - scroll;
+      n.style.left = 80 + i * step + 'px';
+      n.style.width = POSTER_W + 'px';
+      setClass(n, 'wide', false);
+      setClass(n, 'edge', at < 0 || at > 1840 - POSTER_W);
+      var url = n.getAttribute('data-poster');
+      if (url && i >= first - 2 && i < first + POSTERS_VISIBLE + 2) {
+        n.removeAttribute('data-poster');
+        n.querySelector('.layer').style.backgroundImage = 'url(' + url + ')';
+      }
+    }
+    holder.style.webkitTransform = holder.style.transform = 'translateX(' + (-scroll) + 'px)';
+    if (cards[st.card]) backdrop(Data.image(cards[st.card].backdrop, 'w300'));
   }
 
   var bgUrl = null, bgFront = 'bgA';
@@ -1285,6 +1326,7 @@
   function selectTab(i) {
     if (i === st.tab) return;
     st.tab = i;
+    st.card = 0;
     renderCards();
   }
 
