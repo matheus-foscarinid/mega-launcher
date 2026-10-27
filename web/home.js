@@ -563,7 +563,7 @@
     holder.style.webkitTransform = holder.style.transform = 'translateX(' + (-scroll) + 'px)';
   }
 
-  var POSTER_W = 216, POSTER_GAP = 34, POSTERS_VISIBLE = 7;
+  var POSTER_W = 250, POSTER_GAP = 36, POSTERS_VISIBLE = 6;
 
   /**
    * The watchlist: one row of posters at the same size, the focused one scaled up (never resized, so it isn't
@@ -571,7 +571,7 @@
    */
   function layoutPosters() {
     var holder = $('cards'), nodes = holder.children, step = POSTER_W + POSTER_GAP;
-    var last = Math.max(0, nodes.length - POSTERS_VISIBLE), first = Math.max(0, Math.min(last, st.card - 3)), scroll = first * step;
+    var last = Math.max(0, nodes.length - POSTERS_VISIBLE), first = Math.max(0, Math.min(last, st.card - 2)), scroll = first * step;
     for (var i = 0; i < nodes.length; i++) {
       var n = nodes[i], at = 80 + i * step - scroll;
       n.style.left = 80 + i * step + 'px';
