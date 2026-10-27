@@ -431,6 +431,9 @@
       var poster = el('div', 'layer', img);
       poster.style.backgroundImage = 'url(' + (p.poster ? Data.image(p.poster, 'w342') : Data.image(p.backdrop, 'w780')) + ')';
       el('div', 'layer back', img);
+      var app = Data.usable(p.app) ? Data.appFor(p.app) : null;
+      if (app) face(app, el('div', 'badge', img), app.title.length > 8 ? 10 : 13);
+      else card.className += ' off';
       el('div', 'name', card, p.title);
       if (p.meta) el('div', 'meta', card, p.meta);
       hover(card, Z.CARDS, c);
