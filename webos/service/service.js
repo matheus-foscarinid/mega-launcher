@@ -1,10 +1,13 @@
 /*
- * Free My TV's service on LG webOS: one call to the TV's remote control API (127.0.0.1:3000) for the web app.
- * Newer webOS gives each app's page its own origin (file://io.freemytv-webos), and the API closes any connection
- * that isn't from file:// ("invalid origin"); from here the handshake says file://.
- * Plain ES5 with Node's net only: older webOS ships an old Node.
+ * Free My TV's service on LG webOS, for what the web app's page can't reach itself:
+ *  - one call to the TV's remote control API (127.0.0.1:3000). Newer webOS gives each app's page its own origin
+ *    (file://io.freemytv-webos), and the API closes any connection that isn't from file:// ("invalid origin"); from
+ *    here the handshake says file://.
+ *  - a page of a public Letterboxd watchlist, which Letterboxd serves without CORS.
+ * Plain ES5 with Node's built-in modules only: older webOS ships an old Node.
  */
 var net = require('net');
+var https = require('https');
 var Service = require('webos-service');
 
 var service = new Service(require('./package.json').name);
@@ -90,6 +93,57 @@ function call(uri, clientKey, done) {
   socket.on('error', function () { finish(null); });
   socket.on('close', function () { finish(null); });
 }
+
+function decodeEntities(s) {
+  return s.replace(/&#0*39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&#(\d+);/g, function (m, n) { return String.fromCharCode(+n); }).replace(/&amp;/g, '&');
+}
+
+/** A watchlist page's films, as {slug, name ("Title (2024)")}, and how many pages it has. */
+function parseWatchlist(html) {
+  var films = [], tag = /<div[^>]*data-item-slug="[^"]*"[^>]*>/g, m;
+  while ((m = tag.exec(html))) {
+    var slug = /data-item-slug="([^"]*)"/.exec(m[0]), name = /data-item-name="([^"]*)"/.exec(m[0]);
+    if (slug && name) films.push({slug: slug[1], name: decodeEntities(name[1])});
+  }
+  var pages = 1, link = /\/watchlist\/page\/(\d+)\//g;
+  while ((m = link.exec(html))) pages = Math.max(pages, +m[1]);
+  return {films: films, pages: pages};
+}
+
+/** done(error, html) for one page of a Letterboxd watchlist. */
+function fetchWatchlist(user, page, done) {
+  var path = '/' + user + '/watchlist/' + (page > 1 ? 'page/' + page + '/' : '');
+  var finished = false;
+  function finish(err, html) {
+    if (finished) return;
+    finished = true;
+    done(err, html);
+  }
+  var req = https.get({host: 'letterboxd.com', path: path, headers: {'User-Agent': 'Mozilla/5.0 (Web0S; Linux) FreeMyTV',
+    Accept: 'text/html'}}, function (res) {
+    if (res.statusCode !== 200) { res.resume(); finish('HTTP ' + res.statusCode); return; }
+    var chunks = [];
+    res.on('data', function (c) { chunks.push(c); });
+    res.on('end', function () { finish(null, Buffer.concat(chunks).toString('utf8')); });
+  });
+  req.setTimeout(20000, function () { req.abort(); finish('timeout'); });
+  req.on('error', function (e) { finish(e.message || 'no connection'); });
+}
+
+service.register('watchlist', function (message) {
+  var p = message.payload || {}, user = String(p.user || ''), page = +p.page || 1;
+  // only a Letterboxd username and a page number reach the request
+  if (!/^[A-Za-z0-9_]{1,40}$/.test(user) || page < 1 || page > 100 || page !== Math.floor(page)) {
+    message.respond({returnValue: false, errorText: 'Bad user or page'});
+    return;
+  }
+  fetchWatchlist(user, page, function (err, html) {
+    if (err) { message.respond({returnValue: false, errorText: err}); return; }
+    var list = parseWatchlist(html);
+    message.respond({returnValue: true, films: list.films, pages: list.pages});
+  });
+});
 
 service.register('ssap', function (message) {
   var p = message.payload || {};

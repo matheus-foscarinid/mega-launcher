@@ -2,6 +2,7 @@
  * What the home screen shows, kept in localStorage so it opens with numbers:
  *  - the picks: what's trending this week and recent releases, only from the streaming apps on this TV (TMDB, with
  *    the person's own free key from config.properties), 3 per hour (up to 6 in Home Settings);
+ *  - the Letterboxd watchlist (letterboxd_user, LG only), with where each film streams (every 6 h, offers every 3 days);
  *  - weather, sunrise and sunset (Open-Meteo, every 30 min) and optional crypto prices (Binance, every 5 min).
  * Settings changed on the TV (Prefs) win over config.properties, as on Android. Built without a city (--generic), the
  * TV's time zone gives the city, and its country the currency and the region (zones.js).
@@ -366,21 +367,26 @@ var Data = (function () {
     return (cut > 0 ? t.slice(0, cut) : t).replace(/^\s+|\s+$/g, '');
   }
 
-  /** This hour's picks (Prefs.cards()): movies ("movie"), shows ("tv") or both (null). */
-  function now(kind) {
-    var list = [];
-    if (!KEY) return list;
-    for (var i = 0; i < picks.length; i++) {
-      var p = picks[i];
-      if ((kind === null || kind === p.kind) && (!p.detailed || (p.app && usable(p.app)))) list.push(p);
-    }
-    if (!list.length) return list;
-    var hour = Math.floor(Date.now() / 3600000), out = [], seen = {}, n = Prefs.cards();
+  /** Up to n of the list, moving on each hour, one per franchise; out and seen carry over between calls. */
+  function hourly(list, n, out, seen) {
+    var hour = Math.floor(Date.now() / 3600000);
     for (var j = 0; j < list.length && out.length < n; j++) {
       var q = list[(hour * n + j) % list.length], f = franchise(q.title);
       if (!seen[f]) { seen[f] = true; out.push(q); }
     }
     return out;
+  }
+
+  /** This hour's picks (Prefs.cards()): the Letterboxd watchlist ("watchlist") or trending movies ("movie"). */
+  function now(kind) {
+    if (!KEY) return [];
+    if (kind === 'watchlist') return watchlistNow();
+    var list = [];
+    for (var i = 0; i < picks.length; i++) {
+      var p = picks[i];
+      if (kind === p.kind && (!p.detailed || (p.app && usable(p.app)))) list.push(p);
+    }
+    return hourly(list, Prefs.cards(), [], {});
   }
 
   /** TMDB's language, as on Android: Latin American Spanish unless the TV is in Spain, and Germany's German. */
@@ -422,7 +428,7 @@ var Data = (function () {
     return best;
   }
 
-  /** Genre, runtime or seasons, and the service it's on among the TV's apps. */
+  /** Genre, runtime, and the service it's on among the TV's apps (for the watchlist, where to watch it at all). */
   function details(p, done) {
     tmdb('/' + p.kind + '/' + p.id + '?language=' + lang() + '&append_to_response=watch/providers,images&include_image_language=null,'
         + I18N.base + ',en', function (err, o) {
@@ -431,19 +437,22 @@ var Data = (function () {
       if (best) p.backdrop = best;
       if (o.poster_path) p.poster = o.poster_path;
       var parts = [];
-      if (p.kind === 'tv') parts.push(tr('Series'));
       if (o.genres && o.genres.length) {
         parts.push(genre(o.genres[0].name));
       }
       if (p.kind === 'movie' && o.runtime > 0) {
         var h = Math.floor(o.runtime / 60), m = o.runtime % 60;
         parts.push(h ? trf('{h}h {m}m', {h: h, m: m}) : trf('{m}m', {m: m}));
-      } else if (p.kind === 'tv' && o.number_of_seasons > 0) {
-        parts.push(plural('plural|one:{n} season|other:{n} seasons', o.number_of_seasons));
       }
       var wp = o['watch/providers'], here = wp && wp.results && wp.results[REGION], flat = here && here.flatrate;
       p.app = null;
-      for (var i = 0; flat && i < flat.length && !p.app; i++) {
+      if (p.watchlist) {
+        var deal = offer(here);
+        p.app = deal.app;
+        p.paid = deal.paid;
+        parts.push(deal.text);
+      }
+      for (var i = 0; !p.watchlist && flat && i < flat.length && !p.app; i++) {
         var s = service(flat[i].provider_name, flat[i].provider_id);
         if (s && usable(s[1])) { p.app = s[1]; p.service = s[4]; }
       }
@@ -515,24 +524,18 @@ var Data = (function () {
       var common = '&language=' + lang() + '&watch_region=' + REGION + '&with_watch_monetization_types=flatrate&include_adult=false'
           + '&sort_by=popularity.desc&with_watch_providers=' + encodeURIComponent(ids.join('|'))
           + (CONFIG.hideAnimation ? '&without_genres=' + ANIMATION : '');
-      var hot = {movie: [], tv: []}, fresh = {movie: [], tv: []};
-      each(['movie', 'tv'], function (kind, next) {
-        tmdb('/trending/' + kind + '/week?language=' + lang(), function (e, r) {
-          var candidates = [];
-          for (var j = 0; !e && j < r.results.length && j < 16; j++) addPick(candidates, r.results[j], kind);
-          // Trending is only kept when it's on one of the TV's apps: the details say where.
-          each(candidates, function (p, n) {
-            details(p, function (de) { if (!de && p.app) hot[kind].push(p); n(); });
-          }, next);
-        });
-      }, function () {
-        tmdb('/discover/movie?vote_count.gte=30&primary_release_date.gte=' + day(-365) + '&primary_release_date.lte=' + day(0) + common, function (e1, r1) {
-          for (var j = 0; !e1 && j < r1.results.length; j++) addPick(fresh.movie, r1.results[j], 'movie');
-          tmdb('/discover/tv?vote_count.gte=20&air_date.gte=' + day(-90) + '&air_date.lte=' + day(0) + common, function (e2, r2) {
-            for (var k = 0; !e2 && k < r2.results.length; k++) addPick(fresh.tv, r2.results[k], 'tv');
+      var hot = [], fresh = [];
+      tmdb('/trending/movie/week?language=' + lang(), function (e, r) {
+        var candidates = [];
+        for (var j = 0; !e && j < r.results.length && j < 16; j++) addPick(candidates, r.results[j], 'movie');
+        // Trending is only kept when it's on one of the TV's apps: the details say where.
+        each(candidates, function (p, n) {
+          details(p, function (de) { if (!de && p.app) hot.push(p); n(); });
+        }, function () {
+          tmdb('/discover/movie?vote_count.gte=30&primary_release_date.gte=' + day(-365) + '&primary_release_date.lte=' + day(0) + common, function (e1, r1) {
+            for (var k = 0; !e1 && k < r1.results.length; k++) addPick(fresh, r1.results[k], 'movie');
             var list = [], seen = {};
-            alternate(list, seen, hot.movie, hot.tv, 24);
-            alternate(list, seen, fresh.movie, fresh.tv, 24);
+            alternate(list, seen, hot, fresh, 24);
             if (!list.length) { done(new Error('TMDB returned no recommendations')); return; }
             picks = list;
             done(null);
@@ -576,14 +579,134 @@ var Data = (function () {
     }
   }
 
-  /** This hour's picks for the three tabs, without repeats (the screensaver shows them too). */
+  /** This hour's picks for both tabs, without repeats (the screensaver shows them too). */
   function all() {
-    var out = [], seen = {}, kinds = [null, 'movie', 'tv'];
+    var out = [], seen = {}, kinds = ['watchlist', 'movie'];
     for (var k = 0; k < kinds.length; k++) {
       var list = now(kinds[k]);
       for (var i = 0; i < list.length; i++) if (!seen[keyOf(list[i])]) { seen[keyOf(list[i])] = true; out.push(list[i]); }
     }
     return out;
+  }
+
+  // MARK: - Watchlist (Letterboxd)
+
+  var LB_USER = CONFIG.letterboxdUser || '';
+  var saved = stored('watchlist') || {};
+  if (saved.user !== LB_USER) saved = {};
+  var films = saved.films || [], filmsAt = saved.at || 0, filmsStamp = saved.stamp || '', fetchingFilms = false, filmsFailedAt = 0;
+
+  function saveFilms() { store('watchlist', {user: LB_USER, at: filmsAt, stamp: filmsStamp, films: films}); }
+
+  /** Where a film is best watched here: on an app the TV has, included or free first, then to rent or buy. */
+  function offer(here) {
+    var types = ['flatrate', 'free', 'ads', 'rent', 'buy'], elsewhere = null;
+    for (var t = 0; here && t < types.length; t++) {
+      var list = here[types[t]] || [];
+      for (var i = 0; i < list.length; i++) {
+        var s = service(list[i].provider_name, list[i].provider_id), app = s && usable(s[1]) ? s[1] : null;
+        if (app) return {app: app, paid: t >= 3, text: offerText(types[t], s[4])};
+        if (!elsewhere) elsewhere = {app: null, paid: t >= 3, text: offerText(types[t], list[i].provider_name, true)};
+      }
+    }
+    return elsewhere || {app: null, paid: false, text: tr('Not streaming here')};
+  }
+
+  function offerText(type, name, notOnTV) {
+    switch (type) {
+      case 'flatrate': return notOnTV ? trf('{service} (not on this TV)', {service: name}) : name;
+      case 'rent': return trf('Rent on {service}', {service: name});
+      case 'buy': return trf('Buy on {service}', {service: name});
+      default: return trf('Free on {service}', {service: name});
+    }
+  }
+
+  /** This hour's watchlist cards: films included or free on the TV's apps first, then the rest. */
+  function watchlistNow() {
+    var ready = films.filter(function (f) { return f.detailed && f.backdrop; }), n = Prefs.cards();
+    var included = ready.filter(function (f) { return f.app && !f.paid && usable(f.app); });
+    var rest = ready.filter(function (f) { return included.indexOf(f) < 0; });
+    var out = [], seen = {};
+    hourly(included, n, out, seen);
+    return hourly(rest, n, out, seen);
+  }
+
+  /** Every page of the watchlist, in order: done([{slug, name}]) or done(null). */
+  function fetchFilms(done) {
+    var out = [];
+    (function page(n) {
+      TV.watchlist(LB_USER, n, function (res) {
+        if (!res) { done(null); return; }
+        out = out.concat(res.films);
+        if (n < res.pages && n < 50) page(n + 1); else done(out);
+      });
+    })(1);
+  }
+
+  /** The new list, keeping what's known of the films already there. */
+  function mergeFilms(list) {
+    var old = {};
+    for (var i = 0; i < films.length; i++) old[films[i].slug] = films[i];
+    films = list.map(function (x) {
+      return old[x.slug] || {slug: x.slug, name: x.name, kind: 'movie', watchlist: true, id: 0, title: x.name,
+        backdrop: '', poster: '', meta: '', app: null, paid: false, detailed: false, at: 0};
+    });
+  }
+
+  /** The film's TMDB id from its Letterboxd name ("Title (2024)"); done() either way (id -1 when TMDB has none). */
+  function findFilm(f, done) {
+    var m = /^(.*) \((\d{4})\)$/.exec(f.name), name = m ? m[1] : f.name;
+    tmdb('/search/movie?include_adult=false&language=' + lang() + '&query=' + encodeURIComponent(name) + (m ? '&year=' + m[2] : ''),
+        function (err, res) {
+          var hit = !err && res.results && res.results[0];
+          if (err) { done(); return; }
+          f.id = hit ? hit.id : -1;
+          f.title = hit ? hit.title : name;
+          if (hit) { f.backdrop = hit.backdrop_path || ''; f.poster = hit.poster_path || ''; }
+          done();
+        });
+  }
+
+  /** Where each film streams changes: looked up again after 3 days, or at once when the TV's apps change. */
+  function filmStale(f, t) { return !f.at || t - f.at > 3 * 86400000 || t < f.at; }
+
+  function refreshWatchlist() {
+    if (!LB_USER || !KEY || fetchingFilms || !installed.length) return;
+    var t = Date.now(), st = sourceStamp();
+    if (filmsFailedAt && t - filmsFailedAt < 10 * 60000 && t >= filmsFailedAt) return;
+    if (st !== filmsStamp) {
+      for (var i = 0; i < films.length; i++) films[i].at = 0;
+      filmsStamp = st;
+    }
+    var listStale = !films.length || t - filmsAt > 6 * 3600000 || t < filmsAt;
+    var todo = films.filter(function (f) { return filmStale(f, t); });
+    if (!listStale && !todo.length) return;
+    fetchingFilms = true;
+    function lookUp() {
+      var queue = films.filter(function (f) { return filmStale(f, Date.now()); }), done = 0;
+      each(queue, function (f, next) {
+        function finished() {
+          f.at = Date.now();
+          if (++done % 10 === 0) { saveFilms(); changed(); }
+          next();
+        }
+        if (!f.id) { findFilm(f, function () { if (f.id > 0) details(f, finished); else finished(); }); return; }
+        if (f.id > 0) details(f, finished); else finished();
+      }, function () {
+        fetchingFilms = false;
+        saveFilms();
+        changed();
+      });
+    }
+    if (!listStale) { lookUp(); return; }
+    fetchFilms(function (list) {
+      if (!list) { fetchingFilms = false; filmsFailedAt = Date.now(); return; }
+      filmsFailedAt = 0;
+      filmsAt = Date.now();
+      mergeFilms(list);
+      saveFilms();
+      lookUp();
+    });
   }
 
   // MARK: - Formatting
@@ -606,7 +729,7 @@ var Data = (function () {
     appFor: appFor,
     usable: usable,
     services: services,
-    refresh: function () { refreshWeather(); refreshPrices(); refreshRecs(); },
+    refresh: function () { refreshWeather(); refreshPrices(); refreshRecs(); refreshWatchlist(); },
     settingsChanged: function () { pricesAt = 0; refreshPrices(); changed(); },
     findCity: findCity,
     /** Another city picked: its weather now (none shown until it comes). */

@@ -516,6 +516,17 @@ var TV = (function () {
       });
     },
 
+    /**
+     * One page of a public Letterboxd watchlist: done({films: [{slug, name}], pages}), or null. LG only: Letterboxd
+     * sends no CORS headers, so the page asks our JS service (webos/service).
+     */
+    watchlist: function (user, page, done) {
+      if (!webos) { setTimeout(function () { done(null); }, 0); return; }
+      luna('luna://' + self + '.service/watchlist', {user: user, page: page}, function (res) {
+        done(res && res.films ? {films: res.films, pages: res.pages || 1} : null);
+      });
+    },
+
     /** The TV's own settings; done(ok). */
     settings: function (done) {
       if (samsung) samsungSettings(done);
