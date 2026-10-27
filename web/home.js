@@ -1485,7 +1485,7 @@
         saverPick = p;
         // With Watch from the screensaver on, OK opens this title's app (any other key only closes).
         var app = Prefs.saverWatch() && Data.appFor(p.app);
-        hint.textContent = app ? trf('Press OK to watch on {app} · any other button to close', {app: app.title}) : '';
+        hint.textContent = app ? trf('Press OK to watch on {app}', {app: app.title}) : '';
         setTimeout(function () {
           setClass(back, 'on', true);
           setClass(front, 'on', false);
