@@ -280,6 +280,9 @@ var Data = (function () {
   var KEY = Prefs.tmdbKey();
   var REGION = Place.country;
   var API = 'https://api.tmdb.org/3';   // TMDB's own mirror of api.themoviedb.org: some ISPs block the other name (#327)
+  var MIN_VOTES = 25;   // fewer votes than this and the rating says little
+  // in the order a film is best watched: included in a subscription, free, then to pay for
+  var OFFER_TYPES = ['flatrate', 'free', 'ads', 'rent', 'buy'], FIRST_PAID = 3;
 
   /** Service name on TMDB (part of it, lowercase) → our key, how to find its app on the TV (id, name), its name. */
   var SERVICES = [
@@ -372,14 +375,16 @@ var Data = (function () {
   }
 
   /** Up to n of the list, moving on each hour, one per franchise; out and seen carry over between calls. */
-  function hourly(list, n, out, seen) {
+  function hourly(list, n, out, seen, keyFn) {
     var hour = Math.floor(Date.now() / 3600000);
     for (var j = 0; j < list.length && out.length < n; j++) {
-      var q = list[(hour * n + j) % list.length], f = franchise(q.title);
+      var q = list[(hour * n + j) % list.length], f = (keyFn || franchiseOf)(q);
       if (!seen[f]) { seen[f] = true; out.push(q); }
     }
     return out;
   }
+
+  function franchiseOf(p) { return franchise(p.title); }
 
   /** This hour's picks (Prefs.cards()): the Letterboxd watchlist ("watchlist") or trending movies ("movie"). */
   function now(kind) {
@@ -440,34 +445,21 @@ var Data = (function () {
       var best = bestBackdrop(o.images);
       if (best) p.backdrop = best;
       if (o.poster_path) p.poster = o.poster_path;
-      var parts = [];
-      if (o.genres && o.genres.length) {
-        parts.push(genre(o.genres[0].name));
-      }
-      if (p.kind === 'movie' && o.runtime > 0) {
+      p.facts = [];
+      if (o.genres && o.genres.length) p.facts.push(genre(o.genres[0].name));
+      if (o.runtime > 0) {
         var h = Math.floor(o.runtime / 60), m = o.runtime % 60;
-        parts.push(h ? trf('{h}h {m}m', {h: h, m: m}) : trf('{m}m', {m: m}));
+        p.facts.push(h ? trf('{h}h {m}m', {h: h, m: m}) : trf('{m}m', {m: m}));
       }
       p.runtime = o.runtime || 0;
       p.trailer = trailer(o.videos);
       // a score from a handful of votes says little
-      p.rating = o.vote_count >= 25 ? Math.round(o.vote_average * 10) / 10 : 0;
-      if (p.rating) parts.push(trf('{score}/10', {score: fmt(p.rating, 1)}));
-      var wp = o['watch/providers'], here = wp && wp.results && wp.results[REGION], flat = here && here.flatrate;
-      p.app = null;
-      p.plex = !!plexIds[p.id];
-      if (p.watchlist) {
-        var deal = p.plex && usable('plex') ? {app: 'plex', paid: false, text: tr('On your Plex')} : offer(here);
-        p.app = deal.app;
-        p.paid = deal.paid;
-        parts.push(deal.text);
-      }
-      for (var i = 0; !p.watchlist && flat && i < flat.length && !p.app; i++) {
-        var s = service(flat[i].provider_name, flat[i].provider_id);
-        if (s && usable(s[1])) { p.app = s[1]; p.service = s[4]; }
-      }
-      if (p.service && p.app) parts.push(p.service);
-      p.meta = parts.join(' · ');
+      p.rating = o.vote_count >= MIN_VOTES ? Math.round(o.vote_average * 10) / 10 : 0;
+      if (p.rating) p.facts.push(trf('{score}/10', {score: fmt(p.rating, 1)}));
+      var wp = o['watch/providers'];
+      p.providers = providersOf(wp && wp.results && wp.results[REGION]);
+      if (p.watchlist) applyOffer(p); else applyService(p);
+      if (!p.watchlist && !p.app) { p.detailed = true; done(null); return; }   // dropped: not on the TV's apps
       title(p, o, function () {
         findNetflixId(p, function () {
           p.detailed = true;
@@ -477,6 +469,35 @@ var Data = (function () {
     });
   }
 
+  /** The region's offers, only what offer() reads: kept with each watchlist film to recompute without TMDB. */
+  function providersOf(here) {
+    var out = {};
+    for (var t = 0; here && t < OFFER_TYPES.length; t++) {
+      out[OFFER_TYPES[t]] = (here[OFFER_TYPES[t]] || []).map(function (x) { return {provider_name: x.provider_name, provider_id: x.provider_id}; });
+    }
+    return out;
+  }
+
+  /** A trending pick: the first subscription on one of the TV's apps. */
+  function applyService(p) {
+    var flat = p.providers.flatrate;
+    p.app = null;
+    for (var i = 0; i < flat.length && !p.app; i++) {
+      var s = service(flat[i].provider_name, flat[i].provider_id);
+      if (s && usable(s[1])) { p.app = s[1]; p.service = s[4]; }
+    }
+    p.meta = p.facts.concat(p.app ? [p.service] : []).join(' · ');
+  }
+
+  /** A watchlist film: on the person's Plex, else the best offer here. Runs again when the TV's apps or Plex change. */
+  function applyOffer(f) {
+    f.plex = !!plexIds[f.id];
+    var deal = f.plex && usable('plex') ? {app: 'plex', paid: false, text: tr('On your Plex')} : offer(f.providers);
+    f.app = deal.app;
+    f.paid = deal.paid;
+    f.meta = f.facts.concat([deal.text]).join(' · ');
+  }
+
   var WIKIDATA = 'https://query.wikidata.org/sparql?format=json&query=';
 
   /**
@@ -484,7 +505,8 @@ var Data = (function () {
    * film's page in Netflix instead of Netflix's home. done() either way; '' when Wikidata has none.
    */
   function findNetflixId(p, done) {
-    if (p.app !== 'netflix' || p.netflixId !== undefined || !/^\d+$/.test(String(p.id))) { done(); return; }
+    // only LG's Netflix is known to take the id
+    if (TV.name !== 'webos' || p.app !== 'netflix' || p.netflixId !== undefined || !/^\d+$/.test(String(p.id))) { done(); return; }
     var query = 'SELECT ?n WHERE { ?f wdt:P4947 "' + p.id + '"; wdt:P1874 ?n } LIMIT 1';
     get(WIKIDATA + encodeURIComponent(query), {}, function (err, res) {
       var hit = !err && res.results && res.results.bindings[0];
@@ -504,7 +526,7 @@ var Data = (function () {
     var list = (videos && videos.results) || [], best = '', score = -1;
     for (var i = 0; i < list.length; i++) {
       var v = list[i];
-      if (v.site !== 'YouTube' || v.type !== 'Trailer' || !v.key) continue;
+      if (v.site !== 'YouTube' || v.type !== 'Trailer' || !/^[A-Za-z0-9_-]{6,20}$/.test(v.key || '')) continue;
       var s = (v.iso_639_1 === I18N.base ? 2 : 0) + (v.official ? 1 : 0);
       if (s > score) { score = s; best = v.key; }
     }
@@ -516,12 +538,13 @@ var Data = (function () {
    * "닥터X: 하얀 마피아의 시대". Then the English title, when TMDB has one (one more request, only for those).
    */
   function title(p, o, done) {
-    var field = p.kind === 'movie' ? 'title' : 'name', own = o[field] || p.title;
+    var own = o.title || p.title;
     p.title = own;
-    if (I18N.lang === 'en' || !own || own !== o['original_' + field] || o.original_language === I18N.base
+    if (I18N.lang === 'en' || !own || own !== o.original_title || o.original_language === I18N.base
         || o.original_language === 'en') { done(); return; }
+    if (p.watchlist) { p.title = p.name.replace(/ \(\d{4}\)$/, ''); done(); return; }   // Letterboxd's name is English
     tmdb('/' + p.kind + '/' + p.id + '?language=en-US', function (err, en) {
-      if (!err && en && en[field]) p.title = en[field];
+      if (!err && en && en.title) p.title = en.title;
       done();
     });
   }
@@ -637,22 +660,27 @@ var Data = (function () {
 
   // MARK: - Watchlist (Letterboxd)
 
-  var LB_USER = CONFIG.letterboxdUser || '';
+  var LB_USER = TV.name === 'webos' ? CONFIG.letterboxdUser || '' : '';
+  // a new version of what's kept for each film (facts, providers, lang) looks every film up again once
+  var FILMS_VERSION = 2;
   var saved = stored('watchlist') || {};
-  if (saved.user !== LB_USER) saved = {};
+  if (saved.user !== LB_USER || saved.version !== FILMS_VERSION) saved = {};
   var films = saved.films || [], filmsAt = saved.at || 0, filmsStamp = saved.stamp || '', fetchingFilms = false, filmsFailedAt = 0;
 
-  function saveFilms() { store('watchlist', {user: LB_USER, at: filmsAt, stamp: filmsStamp, films: films}); }
+  var LIST_EVERY = 6 * 3600000, LIST_RETRY = 10 * 60000, FILM_EVERY = 3 * 86400000, FILM_RETRY = 3600000, MAX_PAGES = 50;
+  var WATCHLIST_CARDS = 30;
+
+  function saveFilms() { store('watchlist', {user: LB_USER, version: FILMS_VERSION, at: filmsAt, stamp: filmsStamp, films: films}); }
 
   /** Where a film is best watched here: on an app the TV has, included or free first, then to rent or buy. */
   function offer(here) {
-    var types = ['flatrate', 'free', 'ads', 'rent', 'buy'], elsewhere = null;
-    for (var t = 0; here && t < types.length; t++) {
-      var list = here[types[t]] || [];
+    var elsewhere = null;
+    for (var t = 0; here && t < OFFER_TYPES.length; t++) {
+      var list = here[OFFER_TYPES[t]] || [], paid = t >= FIRST_PAID;
       for (var i = 0; i < list.length; i++) {
         var s = service(list[i].provider_name, list[i].provider_id), app = s && usable(s[1]) ? s[1] : null;
-        if (app) return {app: app, paid: t >= 3, text: offerText(types[t], s[4])};
-        if (!elsewhere) elsewhere = {app: null, paid: t >= 3, text: offerText(types[t], list[i].provider_name, true)};
+        if (app) return {app: app, paid: paid, text: offerText(OFFER_TYPES[t], s[4])};
+        if (!elsewhere) elsewhere = {app: null, paid: paid, text: offerText(OFFER_TYPES[t], list[i].provider_name, true)};
       }
     }
     return elsewhere || {app: null, paid: false, text: tr('Not streaming here')};
@@ -667,16 +695,16 @@ var Data = (function () {
     }
   }
 
-  var WATCHLIST_CARDS = 30;
+  /** Included in, or free on, one of the TV's apps (or on the person's Plex): watchable right now. */
+  function watchableNow(f) { return !!f.app && !f.paid && usable(f.app); }
 
-  /** This hour's watchlist posters: films included or free on the TV's apps first, then the rest. */
+  function shown(f) { return f.detailed && !!(f.poster || f.backdrop); }
+
+  /** This hour's watchlist posters: films watchable now first, then the rest. Every film counts, sequels too. */
   function watchlistNow() {
-    var ready = films.filter(function (f) { return f.detailed && (f.poster || f.backdrop); }), n = WATCHLIST_CARDS;
-    var included = ready.filter(function (f) { return f.app && !f.paid && usable(f.app); });
-    var rest = ready.filter(function (f) { return included.indexOf(f) < 0; });
-    var out = [], seen = {};
-    hourly(included, n, out, seen);
-    return hourly(rest, n, out, seen);
+    var ready = films.filter(shown), out = [], seen = {};
+    hourly(ready.filter(watchableNow), WATCHLIST_CARDS, out, seen, keyOf);
+    return hourly(ready.filter(function (f) { return !watchableNow(f); }), WATCHLIST_CARDS, out, seen, keyOf);
   }
 
   /** Lowercase, without accents where the TV can strip them ("Amélie" matches "amelie"). */
@@ -690,10 +718,9 @@ var Data = (function () {
     var q = plain(text).replace(/^\s+|\s+$/g, '');
     if (!q) return watchlistNow();
     var hits = films.filter(function (f) {
-      return f.detailed && (f.poster || f.backdrop) && (plain(f.title).indexOf(q) >= 0 || plain(f.name).indexOf(q) >= 0);
+      return shown(f) && (plain(f.title).indexOf(q) >= 0 || plain(f.name).indexOf(q) >= 0);
     });
-    var now = hits.filter(function (f) { return f.app && !f.paid && usable(f.app); });
-    return now.concat(hits.filter(function (f) { return now.indexOf(f) < 0; })).slice(0, WATCHLIST_CARDS);
+    return hits.filter(watchableNow).concat(hits.filter(function (f) { return !watchableNow(f); })).slice(0, WATCHLIST_CARDS);
   }
 
   /** Every page of the watchlist, in order: done([{slug, name}]) or done(null). */
@@ -703,7 +730,7 @@ var Data = (function () {
       TV.watchlist(LB_USER, n, function (res) {
         if (!res) { done(null); return; }
         out = out.concat(res.films);
-        if (n < res.pages && n < 50) page(n + 1); else done(out);
+        if (n < res.pages && n < MAX_PAGES) page(n + 1); else done(out);
       });
     })(1);
   }
@@ -713,28 +740,45 @@ var Data = (function () {
     var old = {};
     for (var i = 0; i < films.length; i++) old[films[i].slug] = films[i];
     films = list.map(function (x) {
-      return old[x.slug] || {slug: x.slug, name: x.name, kind: 'movie', watchlist: true, id: 0, title: x.name,
-        backdrop: '', poster: '', meta: '', app: null, paid: false, detailed: false, at: 0};
+      return old[x.slug] || {slug: x.slug, name: x.name, kind: 'movie', watchlist: true, id: UNRESOLVED, title: x.name,
+        backdrop: '', poster: '', facts: [], providers: {}, meta: '', app: null, paid: false, detailed: false, at: 0, failedAt: 0};
     });
   }
 
-  /** The film's TMDB id from its Letterboxd name ("Title (2024)"); done() either way (id -1 when TMDB has none). */
+  var UNRESOLVED = 0, NOT_ON_TMDB = -1;
+
+  /** The film's TMDB id from its Letterboxd name ("Title (2024)"); done(error). */
   function findFilm(f, done) {
     var m = /^(.*) \((\d{4})\)$/.exec(f.name), name = m ? m[1] : f.name;
     tmdb('/search/movie?include_adult=false&language=' + lang() + '&query=' + encodeURIComponent(name) + (m ? '&year=' + m[2] : ''),
         function (err, res) {
-          var hit = !err && res.results && res.results[0];
-          if (err) { done(); return; }
-          f.id = hit ? hit.id : -1;
+          if (err) { done(err); return; }
+          var hit = res.results && res.results[0];
+          f.id = hit ? hit.id : NOT_ON_TMDB;
           f.title = hit ? hit.title : name;
           if (hit) { f.backdrop = hit.backdrop_path || ''; f.poster = hit.poster_path || ''; }
-          done();
+          done(null);
         });
   }
 
-  /** Where each film streams changes: looked up again after 3 days, or at once when the TV's apps change. */
-  function filmStale(f, t) {
-    return !f.at || t - f.at > 3 * 86400000 || t < f.at || f.rating === undefined || (f.app === 'netflix' && f.netflixId === undefined);
+  /** What a film's text and offers were fetched for: the TV's language and the region. */
+  function fetchedFor() { return I18N.lang + ':' + REGION; }
+
+  /** Looked up again every 3 days (offers change), for a new language or region, and an hour after a failure. */
+  function filmDue(f, t) {
+    if (f.failedAt) return t - f.failedAt > FILM_RETRY || t < f.failedAt;
+    return !f.at || t - f.at > FILM_EVERY || t < f.at || f.fetchedFor !== fetchedFor();
+  }
+
+  /** The TMDB id, then the details; done() after either, the outcome kept on the film. */
+  function lookUpFilm(f, done) {
+    function finished(err) {
+      if (err) { f.failedAt = Date.now(); } else { f.failedAt = 0; f.at = Date.now(); f.fetchedFor = fetchedFor(); }
+      done();
+    }
+    function detail() { if (f.id === NOT_ON_TMDB) finished(null); else details(f, finished); }
+    if (f.id === UNRESOLVED) findFilm(f, function (err) { if (err) finished(err); else detail(); });
+    else detail();
   }
 
   // MARK: - Plex (plex_url, LG only)
@@ -744,7 +788,7 @@ var Data = (function () {
   if (plexSaved.server !== PLEX_URL) plexSaved = {};
   var plexIds = plexSaved.ids || {}, plexAt = plexSaved.at || 0, fetchingPlex = false;
 
-  /** The server's movies, every 6 hours. A film that joins or leaves it gets its offers looked up again. */
+  /** The server's movies, every 6 hours: the watchlist's offers follow them. */
   function refreshPlex() {
     var t = Date.now();
     if (!PLEX_URL || !PLEX_TOKEN || fetchingPlex || (t - plexAt < 6 * 3600000 && t >= plexAt)) return;
@@ -755,47 +799,48 @@ var Data = (function () {
       if (!ids) return;
       plexIds = ids;
       store('plex', {server: PLEX_URL, at: plexAt, ids: ids});
-      for (var i = 0; i < films.length; i++) if (films[i].id > 0 && !!ids[films[i].id] !== !!films[i].plex) films[i].at = 0;
-      refreshWatchlist();
+      reapplyOffers();
+    });
+  }
+
+  /** The TV's apps or Plex changed: each film's offer again from what's kept, without asking TMDB. */
+  function reapplyOffers() {
+    for (var i = 0; i < films.length; i++) if (films[i].detailed) applyOffer(films[i]);
+    saveFilms();
+    changed();
+  }
+
+  /** The films due, one after the other; the list is saved and shown every 10, and at the end. */
+  function lookUpDue(done) {
+    var queue = films.filter(function (f) { return filmDue(f, Date.now()); }), count = 0;
+    each(queue, function (f, next) {
+      lookUpFilm(f, function () {
+        if (++count % 10 === 0) { saveFilms(); changed(); }
+        next();
+      });
+    }, function () {
+      if (queue.length) { saveFilms(); changed(); }
+      done();
     });
   }
 
   function refreshWatchlist() {
     if (!LB_USER || !KEY || fetchingFilms || !installed.length) return;
-    var t = Date.now(), st = sourceStamp();
-    if (filmsFailedAt && t - filmsFailedAt < 10 * 60000 && t >= filmsFailedAt) return;
-    if (st !== filmsStamp) {
-      for (var i = 0; i < films.length; i++) films[i].at = 0;
-      filmsStamp = st;
-    }
-    var listStale = !films.length || t - filmsAt > 6 * 3600000 || t < filmsAt;
-    var todo = films.filter(function (f) { return filmStale(f, t); });
-    if (!listStale && !todo.length) return;
+    var t = Date.now(), stamp = sourceStamp();
+    if (filmsFailedAt && t - filmsFailedAt < LIST_RETRY && t >= filmsFailedAt) return;
+    if (stamp !== filmsStamp) { filmsStamp = stamp; reapplyOffers(); }
+    var listDue = !films.length || t - filmsAt > LIST_EVERY || t < filmsAt;
+    if (!listDue && !films.some(function (f) { return filmDue(f, t); })) return;
     fetchingFilms = true;
-    function lookUp() {
-      var queue = films.filter(function (f) { return filmStale(f, Date.now()); }), done = 0;
-      each(queue, function (f, next) {
-        function finished() {
-          f.at = Date.now();
-          if (++done % 10 === 0) { saveFilms(); changed(); }
-          next();
-        }
-        if (!f.id) { findFilm(f, function () { if (f.id > 0) details(f, finished); else finished(); }); return; }
-        if (f.id > 0) details(f, finished); else finished();
-      }, function () {
-        fetchingFilms = false;
-        saveFilms();
-        changed();
-      });
-    }
-    if (!listStale) { lookUp(); return; }
+    function finish() { fetchingFilms = false; }
+    if (!listDue) { lookUpDue(finish); return; }
     fetchFilms(function (list) {
-      if (!list) { fetchingFilms = false; filmsFailedAt = Date.now(); return; }
+      if (!list) { filmsFailedAt = Date.now(); finish(); return; }
       filmsFailedAt = 0;
       filmsAt = Date.now();
       mergeFilms(list);
       saveFilms();
-      lookUp();
+      lookUpDue(finish);
     });
   }
 
@@ -839,6 +884,9 @@ var Data = (function () {
     showcase: all,
     /** "7.6/10": a TMDB score in the TV's number format. */
     searchWatchlist: searchWatchlist,
+    watchableNow: watchableNow,
+    /** LG with letterboxd_user: the Watchlist tab, its search and Surprise me. */
+    hasWatchlist: function () { return !!LB_USER; },
     deepLink: deepLink,
     score: function (rating) { return trf('{score}/10', {score: fmt(rating, 1)}); },
     image: function (path, size) { return path ? 'https://image.tmdb.org/t/p/' + (size || 'w1280') + path : ''; },

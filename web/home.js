@@ -386,26 +386,55 @@
 
   // MARK: - Top: title, tabs, buttons, quotes
 
-  var TAB_KIND = ['watchlist', 'movie'], TABS = TAB_KIND.length, BUTTONS = 5;
+  // Without a Letterboxd watchlist (Samsung, or no letterboxd_user) the Movies tab is the only one.
+  var TAB_KIND = Data.hasWatchlist() ? ['watchlist', 'movie'] : ['movie'], TABS = TAB_KIND.length;
+  var topButtons = [];
+
+  function isWatchlistTab() { return TAB_KIND[st.tab] === 'watchlist'; }
+
+  /** The round buttons at the top right: what each shows and does. Search and Surprise me need the watchlist. */
+  function topButtonList() {
+    var list = [
+      {symbol: 'live_tv', label: tr('light|Live TV'), run: openLiveTV},
+      {symbol: 'hdmi', label: tr('HDMI Inputs'), run: openInputs},
+      {symbol: 'settings', label: tr('light|Settings'), run: openSettings}
+    ];
+    if (Data.hasWatchlist()) {
+      list.unshift({symbol: 'search', label: tr('Search the watchlist'), run: startSearch},
+          {symbol: 'sparkles', label: tr('Surprise me'), run: surprise});
+    }
+    return list;
+  }
 
   function renderTop() {
     var tabs = $('tabs');
     tabs.innerHTML = '';
-    var names = [tr('Watchlist'), tr('Movies')];
     for (var i = 0; i < TABS; i++) {
-      var t = el('button', 'tab', tabs, names[i]);
+      var t = el('button', 'tab', tabs, TAB_KIND[i] === 'watchlist' ? tr('Watchlist') : tr('Movies'));
       hover(t, Z.TOP, i);
     }
     var buttons = $('buttons');
     buttons.innerHTML = '';
-    var defs = [['search', tr('Search the watchlist')], ['sparkles', tr('Surprise me')], ['live_tv', tr('light|Live TV')], ['hdmi', tr('HDMI Inputs')], ['settings', tr('light|Settings')]];
-    for (var b = 0; b < BUTTONS; b++) {
-      var r = el('button', 'round' + (b === BUTTONS - 1 ? ' last' : ''), buttons);
-      r.style.left = (1860 - 88 * (BUTTONS - b)) + 'px';
-      sym(defs[b][0], r);
-      el('div', 'tip', r, defs[b][1]);
+    topButtons = topButtonList();
+    for (var b = 0; b < topButtons.length; b++) {
+      var r = el('button', 'round' + (b === topButtons.length - 1 ? ' last' : ''), buttons);
+      r.style.left = (1860 - 88 * (topButtons.length - b)) + 'px';
+      sym(topButtons[b].symbol, r);
+      el('div', 'tip', r, topButtons[b].label);
       hover(r, Z.TOP, TABS + b);
     }
+  }
+
+  function openLiveTV() {
+    var live = liveTV();
+    if (live) launcher(live.id, tr('Live TV'))();
+  }
+
+  function openInputs() {
+    st.zone = Z.SHELF;
+    openDrawer();
+    st.drawer = 1 < drawerInputs ? 1 : 0;
+    updateFocus();
   }
 
   function renderQuotes() {
@@ -421,7 +450,7 @@
   // MARK: - Picks and background
 
   function renderCards() {
-    var posters = TAB_KIND[st.tab] === 'watchlist', list = searching ? Data.searchWatchlist(searchText()) : Data.picks(TAB_KIND[st.tab]);
+    var posters = isWatchlistTab(), list = searching ? Data.searchWatchlist(searchText()) : Data.picks(TAB_KIND[st.tab]);
     var holder = $('cards');
     setClass(body, 'no-picks', !list.length);
     setClass(body, 'posters', posters);
@@ -484,12 +513,24 @@
 
   function searchText() { return fieldOf('search').value; }
 
+  /** The search box stands in for the tabs while on: the flag, the page's look and the field change together. */
+  function setSearching(on) {
+    searching = on;
+    setClass(body, 'searching', on);
+    var field = fieldOf('search');
+    closeField('search');
+    field.value = '';
+    field.placeholder = tr('Search the watchlist');
+  }
+
+  function showWatchlistTab() {
+    var i = TAB_KIND.indexOf('watchlist');
+    if (i >= 0 && st.tab !== i) selectTab(i);
+  }
+
   function startSearch() {
-    if (st.tab !== 0) selectTab(0);
-    searching = true;
-    fieldOf('search').value = '';
-    fieldOf('search').placeholder = tr('Search the watchlist');
-    setClass(body, 'searching', true);
+    showWatchlistTab();
+    setSearching(true);
     renderCards();
     focusSearch();
   }
@@ -502,9 +543,7 @@
 
   /** Back to the whole watchlist, focus on the Search button. */
   function endSearch() {
-    closeField('search');
-    searching = false;
-    setClass(body, 'searching', false);
+    setSearching(false);
     st.zone = Z.TOP;
     st.top = TABS;
     st.card = 0;
@@ -522,9 +561,9 @@
 
   /** A random film from the watchlist posters that's included or free on the TV's apps, with focus on it. */
   function surprise() {
-    if (st.tab !== 0) selectTab(0);
+    showWatchlistTab();
     var choices = [];
-    for (var i = 0; i < cards.length; i++) if (Data.usable(cards[i].app) && !cards[i].paid) choices.push(i);
+    for (var i = 0; i < cards.length; i++) if (Data.watchableNow(cards[i])) choices.push(i);
     if (!choices.length) { toast(tr('Nothing on your apps to pick from yet')); return; }
     st.zone = Z.CARDS;
     st.card = choices[Math.floor(Math.random() * choices.length)];
@@ -532,8 +571,7 @@
     toast(trf('How about {film}?', {film: cards[st.card].title}));
   }
 
-  function playTrailer() {
-    var p = cards[st.card];
+  function playTrailer(p) {
     if (!p || !p.trailer) { toast(tr('No trailer for this one')); return; }
     TV.trailer(p.trailer, function (ok) { if (!ok) toast(tr("Couldn't open the trailer")); });
   }
@@ -554,7 +592,7 @@
    * transform and the backdrop's opacity animate: the widths change at once (older TVs).
    */
   function layoutCards() {
-    if (TAB_KIND[st.tab] === 'watchlist') { layoutPosters(); return; }
+    if (isWatchlistTab()) { layoutPosters(); return; }
     var holder = $('cards'), nodes = holder.children, left = 80, scroll = Math.max(0, st.card - 2) * 360;
     for (var i = 0; i < nodes.length; i++) {
       var wide = i === st.card, w = wide ? 1040 : 320, n = nodes[i], at = left - scroll;
@@ -571,7 +609,7 @@
     holder.style.webkitTransform = holder.style.transform = 'translateX(' + (-scroll) + 'px)';
   }
 
-  var POSTER_W = 284, POSTER_GAP = 40, POSTERS_VISIBLE = 5;
+  var POSTER_W = 284, POSTER_GAP = 40, POSTERS_VISIBLE = 5, ROW_LEFT = 80, ROW_RIGHT = 1840, POSTERS_AHEAD = 2;
 
   /**
    * The watchlist: one row of posters at the same size, the focused one scaled up (never resized, so it isn't
@@ -581,41 +619,59 @@
     var holder = $('cards'), nodes = holder.children, step = POSTER_W + POSTER_GAP;
     var last = Math.max(0, nodes.length - POSTERS_VISIBLE), first = Math.max(0, Math.min(last, st.card - 2)), scroll = first * step;
     for (var i = 0; i < nodes.length; i++) {
-      var n = nodes[i], at = 80 + i * step - scroll;
-      n.style.left = 80 + i * step + 'px';
+      var n = nodes[i], at = ROW_LEFT + i * step - scroll;
+      n.style.left = ROW_LEFT + i * step + 'px';
       n.style.width = POSTER_W + 'px';
       setClass(n, 'wide', false);
-      setClass(n, 'edge', at < 0 || at > 1840 - POSTER_W);
-      var url = n.getAttribute('data-poster');
-      if (url && i >= first - 2 && i < first + POSTERS_VISIBLE + 2) {
-        n.removeAttribute('data-poster');
-        n.querySelector('.layer').style.backgroundImage = 'url(' + url + ')';
-      }
+      setClass(n, 'edge', at < 0 || at > ROW_RIGHT - POSTER_W);
+      if (i >= first - POSTERS_AHEAD && i < first + POSTERS_VISIBLE + POSTERS_AHEAD) loadPoster(n);
     }
     holder.style.webkitTransform = holder.style.transform = 'translateX(' + (-scroll) + 'px)';
-    if (cards[st.card]) backdrop(Data.image(cards[st.card].backdrop, 'w780'));
-    for (var k = st.card - 1; k <= st.card + 1; k++) if (cards[k] && k !== st.card) bgImage(Data.image(cards[k].backdrop, 'w780'));
+    if (cards[st.card]) backdrop(Data.image(cards[st.card].backdrop, 'w780'), neighbourPhotos());
   }
 
-  var bgUrl = null, bgFront = 'bgA', bgTimer = 0, bgImages = {}, BG_SETTLE = 220;
+  function loadPoster(node) {
+    var url = node.getAttribute('data-poster');
+    if (!url) return;
+    node.removeAttribute('data-poster');
+    node.querySelector('.layer').style.backgroundImage = 'url(' + url + ')';
+  }
 
-  /** A photo, downloaded once and kept for when focus comes back to its film; done(img) once it has loaded. */
-  function bgImage(url, done) {
-    var img = bgImages[url];
+  /** The photos of the films beside the focused one, fetched once focus rests so the next step crossfades at once. */
+  function neighbourPhotos() {
+    var out = [];
+    for (var k = st.card - 1; k <= st.card + 1; k += 2) if (cards[k]) out.push(Data.image(cards[k].backdrop, 'w780'));
+    return out;
+  }
+
+  // The last few photos stay decoded for when focus comes back to their film (the screensaver's too): no more, since
+  // a 1 GB TV has little room for images.
+  var photos = {}, photoOrder = [], PHOTOS_KEPT = 8;
+
+  /** A photo, downloaded once; done(img) when it has loaded, or done(null) when it can't. */
+  function photo(url, done) {
+    var img = photos[url];
     if (img && img.complete && img.naturalWidth) { if (done) done(img); return; }
     if (!img) {
-      img = bgImages[url] = new Image();
-      img.onerror = function () { delete bgImages[url]; };
+      img = photos[url] = new Image();
+      photoOrder.push(url);
+      if (photoOrder.length > PHOTOS_KEPT) delete photos[photoOrder.shift()];
+      img.onerror = function () { delete photos[url]; };
+      img.src = url;
     }
-    if (done) img.addEventListener('load', function () { done(img); });
-    if (!img.src) img.src = url;
+    if (done) {
+      img.addEventListener('load', function () { done(img); });
+      img.addEventListener('error', function () { done(null); });
+    }
   }
+
+  var bgUrl = null, bgFront = 'bgA', bgTimer = 0, BG_SETTLE = 220;
 
   /**
    * The picked film's photo, blurred, as the background. It changes only once focus rests (moving along the row only
    * crossfades to the film it stops on), and each photo fades in only once it's downloaded.
    */
-  function backdrop(url) {
+  function backdrop(url, ahead) {
     if (url === bgUrl) return;
     bgUrl = url;
     clearTimeout(bgTimer);
@@ -625,8 +681,9 @@
       return;
     }
     bgTimer = setTimeout(function () {
-      bgImage(url, function (img) {
-        if (bgUrl !== url) return;
+      for (var i = 0; ahead && i < ahead.length; i++) photo(ahead[i]);
+      photo(url, function (img) {
+        if (!img || bgUrl !== url) return;
         var next = bgFront === 'bgA' ? 'bgB' : 'bgA';
         drawSoft($(next), img);
         setClass($(next), 'on', true);
@@ -660,7 +717,7 @@
   /** On the minute, so the clock never runs late (the 30-second refresh could, by up to 30 s). */
   function tickClock() {
     renderClock();
-    if (TAB_KIND[st.tab] === 'watchlist') renderFits();
+    if (isWatchlistTab()) renderFits();
     setTimeout(tickClock, 60000 - Date.now() % 60000 + 50);
   }
 
@@ -1408,12 +1465,7 @@
   function activate() {
     switch (st.zone) {
       case Z.TOP:
-        if (st.top < TABS) return;
-        if (st.top === TABS) startSearch();
-        else if (st.top === TABS + 1) surprise();
-        else if (st.top === TABS + 2) { var live = liveTV(); if (live) launcher(live.id, tr('Live TV'))(); }
-        else if (st.top === TABS + 3) { st.zone = Z.SHELF; openDrawer(); st.drawer = 1 < drawerInputs ? 1 : 0; updateFocus(); }
-        else openSettings();
+        if (st.top >= TABS) topButtons[st.top - TABS].run();
         return;
       case Z.SEARCH:
         openField('search');
@@ -1453,6 +1505,13 @@
     }
   }
 
+  /** Down from the tabs: the first card. From a button: the poster under it, or the last of a short row. */
+  function cardBelow() {
+    if (st.top < TABS) return 0;
+    if (!isWatchlistTab()) return cards.length - 1;
+    return nearest($('cards').children, centerX($('buttons').children[st.top - TABS]));
+  }
+
   function selectTab(i) {
     if (i === st.tab) return;
     if (searching) endSearch();
@@ -1484,10 +1543,11 @@
         break;
       case Z.TOP:
         if (dx) {
-          st.top = Math.max(Data.hasKey() ? 0 : TABS, Math.min(TABS + BUTTONS - 1, st.top + dx));   // without the picks the tabs can't hold focus
+          // without the picks, or while the search box stands in for them, the tabs can't hold focus
+          st.top = Math.max(Data.hasKey() && !searching ? 0 : TABS, Math.min(TABS + topButtons.length - 1, st.top + dx));
           if (st.top < TABS) selectTab(st.top);   // as on Apple TV: focusing a tab selects it
         } else if (dy > 0) {
-          if (cards.length) { st.zone = Z.CARDS; st.card = Math.min(cards.length - 1, st.top < TABS ? 0 : cards.length - 1); }
+          if (cards.length) { st.zone = Z.CARDS; st.card = cardBelow(); }
           else st.zone = Z.SHELF;
         }
         break;
@@ -1524,7 +1584,6 @@
   }
 
   function back() {
-    if (searching) { endSearch(); return; }
     if (st.zone === Z.EDIT) {
       setClass($('shelfedit'), 'open', false);
       openSettings();
@@ -1538,6 +1597,7 @@
     if (st.zone === Z.ABOUT) { closeAbout(); return; }
     if (sheetOpen()) { closeSheets(); return; }
     if (st.zone === Z.DRAWER) { closeDrawer(); return; }
+    if (searching) { endSearch(); return; }
     if (st.zone !== Z.SHELF && shelf.length) { st.zone = Z.SHELF; updateFocus(); return; }
     TV.back();
   }
@@ -1590,7 +1650,7 @@
     try { localStorage.setItem('fmtv.night', night ? 'true' : 'false'); } catch (e) {}   // for index.html, next start
   }
 
-  var saverRun = 0, saverOn = false, idleAt = Date.now(), saverIndex = 0, saverTimer = 0, saverPick = null, SAVER_AFTER = 5 * 60000;
+  var saverRun = 0, saverOn = false, idleAt = Date.now(), saverIndex = 0, saverTimer = 0, saverPick = null, SAVER_AFTER = 5 * 60000, SAVER_EVERY = 12000;
 
   /** The screensaver's photos: the watchlist's films on the TV's apps, or the picks when it has none yet. */
   function saverPhotos() {
@@ -1600,33 +1660,23 @@
   }
 
   function showSaver() {
-    var photos = saverPhotos();
+    var shots = saverPhotos(), run = ++saverRun;
     saverOn = true;
     saverPick = null;
     var s = $('saver');
     s.innerHTML = '';
-    var a = el('div', 'photo', s), b = el('div', 'photo', s);
+    var a = el('div', 'photo', s), b = el('div', 'photo', s), front = a;
     el('div', 'shade', s);
     var clock = el('div', 'clock', s);
     el('div', 'time', clock);
     el('div', 'date', clock);
-    el('div', 'title', clock);
-    var hint = el('div', 'hint', clock);
-    var front = a, run = ++saverRun, ready = null;
-    // Each photo is downloaded before it fades in, and the next one while this one shows: no blank screen between them.
-    function preload(p, done) {
-      var img = new Image(), url = Data.image(p.backdrop, 'original');
-      img.onload = function () { done(url); };
-      img.onerror = function () { done(null); };
-      img.src = url;
-    }
+    var text = {title: el('div', 'title', clock), hint: el('div', 'hint', clock), box: clock};
     function show(p, url) {
-      if (!saverOn || run !== saverRun) return;
       var back = front === a ? b : a;
       back.style.backgroundImage = 'url(' + url + ')';
       back.style.webkitTransform = back.style.transform = 'scale(1.0)';
       saverPick = p;
-      swapText(clock, p);
+      swapText(text, p);
       setTimeout(function () {
         setClass(back, 'on', true);
         setClass(front, 'on', false);
@@ -1634,34 +1684,32 @@
         front = back;
       }, 60);
     }
+    // Each photo fades in only once downloaded, and the next one downloads while this one shows: no blank screen.
     function next() {
-      if (!saverOn || run !== saverRun) return;
+      if (run !== saverRun) return;
       tickSaverClock(clock);
-      saverTimer = setTimeout(next, 12000);
-      if (!photos.length) return;
-      var p = photos[saverIndex++ % photos.length], upcoming = photos[saverIndex % photos.length];
-      var shown = ready && ready.p === p ? ready : null;
-      ready = null;
-      function after(url) {
-        if (url) show(p, url);
-        preload(upcoming, function (u) { if (u) ready = {p: upcoming, url: u}; });
-      }
-      if (shown) after(shown.url); else preload(p, after);
+      saverTimer = setTimeout(next, SAVER_EVERY);
+      if (!shots.length) return;
+      var p = shots[saverIndex++ % shots.length], url = Data.image(p.backdrop, 'original');
+      photo(url, function (img) {
+        if (run !== saverRun) return;
+        if (img) show(p, url);
+        photo(Data.image(shots[saverIndex % shots.length].backdrop, 'original'));
+      });
     }
     setClass(s, 'on', true);
     next();
   }
 
   /** The film's name with its score, and the OK hint: faded out, changed, and faded back in with the photo. */
-  function swapText(clock, p) {
-    var title = clock.children[2], hint = clock.children[3];
+  function swapText(text, p) {
     // With Watch from the screensaver on, OK opens this title's app (any other key only closes).
     var app = Prefs.saverWatch() && Data.appFor(p.app);
-    setClass(clock, 'swap', true);
+    setClass(text.box, 'swap', true);
     setTimeout(function () {
-      title.textContent = p.rating ? p.title + '  ·  ' + Data.score(p.rating) : p.title;
-      hint.textContent = app ? trf('Press OK to watch on {app}', {app: app.title}) : '';
-      setClass(clock, 'swap', false);
+      text.title.textContent = p.rating ? p.title + '  ·  ' + Data.score(p.rating) : p.title;
+      text.hint.textContent = app ? trf('Press OK to watch on {app}', {app: app.title}) : '';
+      setClass(text.box, 'swap', false);
     }, 400);
   }
 
@@ -1705,23 +1753,28 @@
   document.addEventListener('keyup', function (e) { if (e.keyCode === TV.keys.ok) okUp(); });
 
   // On a watchlist poster, OK opens its app on release and holding it plays the trailer. The remote repeats keydown
-  // while held, so only the first one counts.
-  var okHeld = false, holdTimer = 0, HOLD_MS = 600;
+  // while held, so only the first one counts. YouTube takes the release, so leaving the app clears the hold too.
+  var hold = {down: false, fired: false, timer: 0}, HOLD_MS = 600;
 
   function okDown() {
-    if (st.zone !== Z.CARDS || TAB_KIND[st.tab] !== 'watchlist') { activate(); return; }
-    if (okHeld) return;
-    okHeld = true;
-    holdTimer = setTimeout(function () { holdTimer = 0; playTrailer(); }, HOLD_MS);
+    if (st.zone !== Z.CARDS || !isWatchlistTab()) { activate(); return; }
+    if (hold.down) return;
+    var card = cards[st.card];
+    hold.down = true;
+    hold.fired = false;
+    hold.timer = setTimeout(function () { hold.fired = true; playTrailer(card); }, HOLD_MS);
   }
 
   function okUp() {
-    if (!okHeld) return;
-    okHeld = false;
-    if (!holdTimer) return;
-    clearTimeout(holdTimer);
-    holdTimer = 0;
-    activate();
+    var tapped = hold.down && !hold.fired;
+    releaseOk();
+    if (tapped) activate();
+  }
+
+  function releaseOk() {
+    clearTimeout(hold.timer);
+    hold.down = false;
+    hold.fired = false;
   }
   document.addEventListener('mousemove', function () { poke(); });
 
@@ -1783,9 +1836,11 @@
   function reset() {
     hideSaver();
     closeSheets();
+    if (searching) setSearching(false);
     st.zone = Z.SHELF;
     st.shelf = 0;
-    if (st.tab !== 0) { st.tab = 0; renderCards(); }
+    st.tab = 0;
+    renderCards();
     updateFocus();
     restInDrawer();   // drawer_first: out again at once, not only after the TV lists its apps
   }
@@ -1816,7 +1871,7 @@
   document.addEventListener('webOSRelaunch', reopened);   // LG: opened again while running
   window.addEventListener('appcontrol', reopened);        // Samsung: the same
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden) { hideSaver(); return; }
+    if (document.hidden) { hideSaver(); releaseOk(); return; }
     idleAt = Date.now();
     loadApps(function () { renderShelf(); renderDrawer(); updateFocus(); Data.refresh(); });
   });
