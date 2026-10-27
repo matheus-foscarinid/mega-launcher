@@ -12,6 +12,7 @@ var https = require('https');
 var Service = require('webos-service');
 
 var service = new Service(require('./package.json').name);
+var MAX_PAGES = 50;   // as web/data.js asks for
 
 function buffer(x) {   // Buffer.from is missing before Node 4.5
   return Buffer.from ? Buffer.from(x) : new Buffer(x);
@@ -112,30 +113,34 @@ function parseWatchlist(html) {
   return {films: films, pages: pages};
 }
 
-/** done(error, html) for one page of a Letterboxd watchlist. */
-function fetchWatchlist(user, page, done) {
-  var path = '/' + user + '/watchlist/' + (page > 1 ? 'page/' + page + '/' : '');
+/** done(error, text) for one https GET, at most once. */
+function httpsGetText(options, timeout, done) {
   var finished = false;
-  function finish(err, html) {
+  function finish(err, text) {
     if (finished) return;
     finished = true;
-    done(err, html);
+    done(err, text);
   }
-  var req = https.get({host: 'letterboxd.com', path: path, headers: {'User-Agent': 'Mozilla/5.0 (Web0S; Linux) FreeMyTV',
-    Accept: 'text/html'}}, function (res) {
+  var req = https.get(options, function (res) {
     if (res.statusCode !== 200) { res.resume(); finish('HTTP ' + res.statusCode); return; }
     var chunks = [];
     res.on('data', function (c) { chunks.push(c); });
     res.on('end', function () { finish(null, Buffer.concat(chunks).toString('utf8')); });
   });
-  req.setTimeout(20000, function () { req.abort(); finish('timeout'); });
+  req.setTimeout(timeout, function () { req.abort(); finish('timeout'); });
   req.on('error', function (e) { finish(e.message || 'no connection'); });
+}
+
+function fetchWatchlist(user, page, done) {
+  var path = '/' + user + '/watchlist/' + (page > 1 ? 'page/' + page + '/' : '');
+  httpsGetText({host: 'letterboxd.com', path: path,
+    headers: {'User-Agent': 'Mozilla/5.0 (Web0S; Linux) FreeMyTV', Accept: 'text/html'}}, 20000, done);
 }
 
 service.register('watchlist', function (message) {
   var p = message.payload || {}, user = String(p.user || ''), page = +p.page || 1;
   // only a Letterboxd username and a page number reach the request
-  if (!/^[A-Za-z0-9_]{1,40}$/.test(user) || page < 1 || page > 100 || page !== Math.floor(page)) {
+  if (!/^[A-Za-z0-9_]{1,40}$/.test(user) || page < 1 || page > MAX_PAGES || page !== Math.floor(page)) {
     message.respond({returnValue: false, errorText: 'Bad user or page'});
     return;
   }
@@ -148,25 +153,14 @@ service.register('watchlist', function (message) {
 
 /** done(error, json) for one Plex API path, with the token in a header (never in the URL). */
 function plexGet(server, token, path, done) {
-  var m = /^https:\/\/([a-z0-9.-]+):(\d+)$/.exec(server), finished = false;
-  function finish(err, json) {
-    if (finished) return;
-    finished = true;
-    done(err, json);
-  }
-  var req = https.get({host: m[1], port: +m[2], path: path, headers: {Accept: 'application/json', 'X-Plex-Token': token}},
-      function (res) {
-        if (res.statusCode !== 200) { res.resume(); finish('HTTP ' + res.statusCode); return; }
-        var chunks = [];
-        res.on('data', function (c) { chunks.push(c); });
-        res.on('end', function () {
-          var json = null;
-          try { json = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (e) {}
-          finish(json ? null : 'bad answer', json);
-        });
+  var m = /^https:\/\/([a-z0-9.-]+):(\d+)$/.exec(server);
+  httpsGetText({host: m[1], port: +m[2], path: path, headers: {Accept: 'application/json', 'X-Plex-Token': token}}, 30000,
+      function (err, text) {
+        if (err) { done(err); return; }
+        var json = null;
+        try { json = JSON.parse(text); } catch (e) {}
+        done(json ? null : 'bad answer', json);
       });
-  req.setTimeout(30000, function () { req.abort(); finish('timeout'); });
-  req.on('error', function (e) { finish(e.message || 'no connection'); });
 }
 
 /** {tmdb id: Plex ratingKey} for every movie in the server's movie libraries. */

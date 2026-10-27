@@ -516,12 +516,8 @@ var TV = (function () {
       });
     },
 
-    /**
-     * One page of a public Letterboxd watchlist: done({films: [{slug, name}], pages}), or null. LG only: Letterboxd
-     * sends no CORS headers, so the page asks our JS service (webos/service).
-     */
+    /** One page of a Letterboxd watchlist: done({films: [{slug, name}], pages}), or null. LG only: no CORS there. */
     watchlist: function (user, page, done) {
-      if (!webos) { setTimeout(function () { done(null); }, 0); return; }
       luna('luna://' + self + '.service/watchlist', {user: user, page: page}, function (res) {
         done(res && res.films ? {films: res.films, pages: res.pages || 1} : null);
       });
@@ -529,7 +525,6 @@ var TV = (function () {
 
     /** The movies on the person's Plex server: done({tmdb id: ratingKey}), or null. LG only, through our JS service. */
     plexMovies: function (server, token, done) {
-      if (!webos) { setTimeout(function () { done(null); }, 0); return; }
       luna('luna://' + self + '.service/plex', {server: server, token: token}, function (res) {
         done(res && res.ids ? res.ids : null);
       });
