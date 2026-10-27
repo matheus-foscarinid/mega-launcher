@@ -473,7 +473,6 @@
       if (p.meta) el('div', 'meta', card, p.meta);
       var more = el('div', 'more', card);
       el('span', 'fit', more);
-      if (p.trailer && TV.name !== 'tizen') el('span', 'hint', more, tr('Hold OK for the trailer'));
       hover(card, Z.CARDS, c);
     }
     st.card = Math.min(st.card, Math.max(0, list.length - 1));

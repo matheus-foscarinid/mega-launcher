@@ -292,9 +292,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   color: #6E6E73;
 }
 .posters .card.focus .more { top: 514px; }
-.posters .card .hint { display: none; }
-.posters .card.focus .hint { display: inline; }
-.posters .card .fit:not(:empty) + .hint::before { content: '  ·  '; white-space: pre; }
 .night.posters .card .more { color: rgba(245, 245, 247, 0.55); }
 .night.posters .card .name { color: rgba(245, 245, 247, 0.72); }
 .night.posters .card.focus .name { color: #F5F5F7; }
