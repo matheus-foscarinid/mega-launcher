@@ -57,6 +57,8 @@ var Prefs = (function () {
     /** Picks per tab: 3 (as it was) up to 6. */
     cards: function () { var n = pick('cards', 3); return n < 3 ? 3 : n > 6 ? 6 : n; },
     shelf: function () { return pick('shelf', null); },
+    /** The hour the watchlist marks the films that end before (Home Settings → Ends before), or -1 for off. */
+    endsBy: function () { return pick('endsBy', -1); },
     /** The shelf_apps of the build that last set the shelf, so a new one wins once over the TV's choice. */
     shelfConfig: function () { return pick('shelfConfig', ''); },
     /** The weather's city, picked on the TV (Home Settings → City), or config.properties' (or the time zone's). */
@@ -291,7 +293,8 @@ var Data = (function () {
     ['apple tv', 'appletv', /appletv|apple\.tv/, /apple tv/i, 'Apple TV'],
     ['hotstar', 'hotstar', /hotstar/, /hotstar/i, 'JioHotstar'],
     ['crunchyroll', 'crunchyroll', /crunchyroll/, /crunchyroll/i, 'Crunchyroll'],
-    ['now tv', 'now', /nowtv|now\.tv/, /^now( tv)?$/i, 'NOW']
+    ['now tv', 'now', /nowtv|now\.tv/, /^now( tv)?$/i, 'NOW'],
+    ['plex', 'plex', /^cdp-30$|plex/, /^plex$/i, 'Plex']
   ];
 
   var installed = [];   // the TV's apps, from TV.apps()
@@ -430,8 +433,8 @@ var Data = (function () {
 
   /** Genre, runtime, and the service it's on among the TV's apps (for the watchlist, where to watch it at all). */
   function details(p, done) {
-    tmdb('/' + p.kind + '/' + p.id + '?language=' + lang() + '&append_to_response=watch/providers,images&include_image_language=null,'
-        + I18N.base + ',en', function (err, o) {
+    tmdb('/' + p.kind + '/' + p.id + '?language=' + lang() + '&append_to_response=watch/providers,images,videos&include_image_language=null,'
+        + I18N.base + ',en&include_video_language=' + I18N.base + ',en', function (err, o) {
       if (err) { done(err); return; }
       var best = bestBackdrop(o.images);
       if (best) p.backdrop = best;
@@ -444,10 +447,16 @@ var Data = (function () {
         var h = Math.floor(o.runtime / 60), m = o.runtime % 60;
         parts.push(h ? trf('{h}h {m}m', {h: h, m: m}) : trf('{m}m', {m: m}));
       }
+      p.runtime = o.runtime || 0;
+      p.trailer = trailer(o.videos);
+      // a score from a handful of votes says little
+      p.rating = o.vote_count >= 25 ? Math.round(o.vote_average * 10) / 10 : 0;
+      if (p.rating) parts.push(trf('{score}/10', {score: fmt(p.rating, 1)}));
       var wp = o['watch/providers'], here = wp && wp.results && wp.results[REGION], flat = here && here.flatrate;
       p.app = null;
+      p.plex = !!plexIds[p.id];
       if (p.watchlist) {
-        var deal = offer(here);
+        var deal = p.plex && usable('plex') ? {app: 'plex', paid: false, text: tr('On your Plex')} : offer(here);
         p.app = deal.app;
         p.paid = deal.paid;
         parts.push(deal.text);
@@ -463,6 +472,18 @@ var Data = (function () {
         done(null);
       });
     });
+  }
+
+  /** The film's YouTube trailer id: an official one in the TV's language first, then any in English. */
+  function trailer(videos) {
+    var list = (videos && videos.results) || [], best = '', score = -1;
+    for (var i = 0; i < list.length; i++) {
+      var v = list[i];
+      if (v.site !== 'YouTube' || v.type !== 'Trailer' || !v.key) continue;
+      var s = (v.iso_639_1 === I18N.base ? 2 : 0) + (v.official ? 1 : 0);
+      if (s > score) { score = s; best = v.key; }
+    }
+    return best;
   }
 
   /**
@@ -633,6 +654,23 @@ var Data = (function () {
     return hourly(rest, n, out, seen);
   }
 
+  /** Lowercase, without accents where the TV can strip them ("Amélie" matches "amelie"). */
+  function plain(s) {
+    s = String(s || '').toLowerCase();
+    return s.normalize ? s.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : s;
+  }
+
+  /** The watchlist's films whose title (or Letterboxd name) has the text in it: watchable ones first, 30 at most. */
+  function searchWatchlist(text) {
+    var q = plain(text).replace(/^\s+|\s+$/g, '');
+    if (!q) return watchlistNow();
+    var hits = films.filter(function (f) {
+      return f.detailed && (f.poster || f.backdrop) && (plain(f.title).indexOf(q) >= 0 || plain(f.name).indexOf(q) >= 0);
+    });
+    var now = hits.filter(function (f) { return f.app && !f.paid && usable(f.app); });
+    return now.concat(hits.filter(function (f) { return now.indexOf(f) < 0; })).slice(0, WATCHLIST_CARDS);
+  }
+
   /** Every page of the watchlist, in order: done([{slug, name}]) or done(null). */
   function fetchFilms(done) {
     var out = [];
@@ -670,7 +708,30 @@ var Data = (function () {
   }
 
   /** Where each film streams changes: looked up again after 3 days, or at once when the TV's apps change. */
-  function filmStale(f, t) { return !f.at || t - f.at > 3 * 86400000 || t < f.at; }
+  function filmStale(f, t) { return !f.at || t - f.at > 3 * 86400000 || t < f.at || f.rating === undefined; }
+
+  // MARK: - Plex (plex_url, LG only)
+
+  var PLEX_URL = CONFIG.plexUrl || '', PLEX_TOKEN = CONFIG.plexToken || '';
+  var plexSaved = stored('plex') || {};
+  if (plexSaved.server !== PLEX_URL) plexSaved = {};
+  var plexIds = plexSaved.ids || {}, plexAt = plexSaved.at || 0, fetchingPlex = false;
+
+  /** The server's movies, every 6 hours. A film that joins or leaves it gets its offers looked up again. */
+  function refreshPlex() {
+    var t = Date.now();
+    if (!PLEX_URL || !PLEX_TOKEN || fetchingPlex || (t - plexAt < 6 * 3600000 && t >= plexAt)) return;
+    fetchingPlex = true;
+    TV.plexMovies(PLEX_URL, PLEX_TOKEN, function (ids) {
+      fetchingPlex = false;
+      plexAt = Date.now();   // also after a failure: the server is asked again in 6 hours, not on every refresh
+      if (!ids) return;
+      plexIds = ids;
+      store('plex', {server: PLEX_URL, at: plexAt, ids: ids});
+      for (var i = 0; i < films.length; i++) if (films[i].id > 0 && !!ids[films[i].id] !== !!films[i].plex) films[i].at = 0;
+      refreshWatchlist();
+    });
+  }
 
   function refreshWatchlist() {
     if (!LB_USER || !KEY || fetchingFilms || !installed.length) return;
@@ -731,7 +792,7 @@ var Data = (function () {
     appFor: appFor,
     usable: usable,
     services: services,
-    refresh: function () { refreshWeather(); refreshPrices(); refreshRecs(); refreshWatchlist(); },
+    refresh: function () { refreshWeather(); refreshPrices(); refreshRecs(); refreshPlex(); refreshWatchlist(); },
     settingsChanged: function () { pricesAt = 0; refreshPrices(); changed(); },
     findCity: findCity,
     /** Another city picked: its weather now (none shown until it comes). */
@@ -749,6 +810,9 @@ var Data = (function () {
     recsError: function () { return recsError; },
     picks: now,
     showcase: all,
+    /** "7.6/10": a TMDB score in the TV's number format. */
+    searchWatchlist: searchWatchlist,
+    score: function (rating) { return trf('{score}/10', {score: fmt(rating, 1)}); },
     image: function (path, size) { return path ? 'https://image.tmdb.org/t/p/' + (size || 'w1280') + path : ''; },
 
     /** Night at the location: from sunset to sunrise (the last forecast; without one, 6:00 and 18:00). */

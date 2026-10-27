@@ -1,5 +1,5 @@
 /*
- * The home screen on a 1920 × 1080 stage, with the Android app's measurements (HomeView): the title and tabs at the top
+ * The home screen on a 1920 × 1080 stage, with the Android app's measurements (HomeView): the tabs at the top
  * left, icon-only glass buttons at the top right, three picks, and the glass shelf at the bottom; ↓ on the shelf opens
  * the drawer (inputs, shortcuts, weather, prices). Light by day, dark from sunset to sunrise.
  * No CSS variables, grid or backdrop-filter: older LG TVs (webOS 3 and 4) don't have them, and blur is too heavy for
@@ -91,22 +91,37 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 
 /* MARK: - Title and tabs */
 
-#title {
+#tabs { position: absolute; left: 54px; top: 69px; height: 68px; white-space: nowrap; }
+#search {
   position: absolute;
-  left: 76px;
-  top: 52px;
-  margin: 0;
-  font-size: 76px;
-  font-weight: 600;
-  letter-spacing: 0.004em;
-  line-height: 1;
-  white-space: nowrap;
-  color: #1D1D1F;
-  -webkit-transition: color 2s;
-  transition: color 2s;
+  left: 54px;
+  top: 69px;
+  width: 620px;
+  height: 68px;
+  border-radius: 34px;
+  background: rgba(255, 255, 255, 0.6);
+  opacity: 0;
+  visibility: hidden;
+  -webkit-transition: opacity 0.2s, -webkit-transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2), visibility 0s 0.2s;
+  transition: opacity 0.2s, transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2), visibility 0s 0.2s;
 }
-
-#tabs { position: absolute; left: 54px; top: 158px; height: 68px; white-space: nowrap; }
+#search input {
+  position: absolute;
+  left: 30px;
+  right: 30px;
+  top: 0;
+  height: 68px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 30px;
+  font-weight: 500;
+  color: #1D1D1F;
+}
+#search.focus { background: #FFF; -webkit-transform: scale(1.03); transform: scale(1.03); box-shadow: 0 8px 26px rgba(0, 0, 0, 0.22); }
+.searching #search { opacity: 1; visibility: visible; -webkit-transition-delay: 0s; transition-delay: 0s; }
+.searching #tabs { visibility: hidden; }
 .tab {
   position: relative;
   display: inline-block;
@@ -129,7 +144,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   transform: scale(1.05);
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.22);
 }
-.night #title, .night .tab.on { color: #F5F5F7; }
+.night .tab.on { color: #F5F5F7; }
 .night .tab { color: rgba(245, 245, 247, 0.62); }
 .night .tab.focus { color: #1D1D1F; box-shadow: 0 8px 26px rgba(0, 0, 0, 0.4); }
 
@@ -137,7 +152,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #quotes {
   position: absolute;
   right: 80px;
-  top: 178px;
+  top: 162px;
   height: 28px;
   font-size: 21px;
   line-height: 28px;
@@ -207,7 +222,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 
 .card {
   position: absolute;
-  top: 262px;
+  top: 210px;
   height: 442px;
   -webkit-transition: -webkit-transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.15);
   transition: transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.15);
@@ -260,7 +275,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .card .badge img.logo { width: 72%; height: 52%; max-width: none; max-height: none; object-fit: contain; }
 .card .badge .word { position: absolute; left: 3px; right: 3px; top: 50%; margin-top: -7px; line-height: 14px; text-align: center; font-weight: 700; white-space: nowrap; overflow: hidden; color: #FFF; }
 .posters .card {
-  top: 282px;
+  top: 220px;
   height: 324px;
   -webkit-transition: -webkit-transform 0.34s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.34s ease-out;
   transition: transform 0.34s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.34s ease-out;
@@ -273,6 +288,21 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .posters .card.focus .name { color: #1D1D1F; font-weight: 600; }
 .posters .card .meta { top: 386px; max-width: none; font-size: 21px; }
 .posters .card.focus .meta { opacity: 1; }
+.posters .card .fit, .posters .card .hint {
+  position: absolute;
+  left: 0;
+  top: 386px;
+  white-space: nowrap;
+  font-size: 20px;
+  font-weight: 500;
+  color: #6E6E73;
+  -webkit-transition: opacity 0.3s;
+  transition: opacity 0.3s;
+}
+.posters .card.focus .fit { top: 418px; }
+.posters .card .hint { top: 450px; opacity: 0; }
+.posters .card.focus .hint { opacity: 1; }
+.night.posters .card .fit, .night.posters .card .hint { color: rgba(245, 245, 247, 0.55); }
 .night.posters .card .name { color: rgba(245, 245, 247, 0.72); }
 .night.posters .card.focus .name { color: #F5F5F7; }
 .card.off .img { -webkit-filter: grayscale(1); filter: grayscale(1); opacity: 0.45; }
@@ -345,7 +375,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 }
 #clock .date { display: block; font-size: 40px; font-weight: 500; letter-spacing: 0; margin-top: 18px; color: #6E6E73; }
 .no-picks #clock { display: block; }
-.no-key #title, .no-key #tabs { visibility: hidden; }
+.no-key #tabs { visibility: hidden; }
 .night #clock { color: #F5F5F7; }
 .night #clock .date { color: rgba(245, 245, 247, 0.62); }
 
@@ -603,6 +633,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #saver .clock .date { margin-top: 10px; font-size: 34px; font-weight: 500; color: rgba(255, 255, 255, 0.82); }
 #saver .clock .title { margin-top: 18px; font-size: 26px; font-weight: 500; color: rgba(255, 255, 255, 0.65); }
 #saver .clock .hint { margin-top: 8px; font-size: 22px; color: rgba(255, 255, 255, 0.55); }
+#saver .clock .title, #saver .clock .hint { -webkit-transition: opacity 0.4s; transition: opacity 0.4s; }
+#saver .clock.swap .title, #saver .clock.swap .hint { opacity: 0; }
 
 /* MARK: - Toast */
 

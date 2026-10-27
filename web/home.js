@@ -1,7 +1,7 @@
 /*
  * The home screen for web-app TVs (LG webOS, Samsung Tizen), with the Android app's design and behavior (HomeView):
- *  - top: the "For You" title and the tabs (Watchlist, Movies); icon-only glass buttons at the right (Live TV,
- *    HDMI Inputs, Settings) and the crypto quotes at the end of the tab row;
+ *  - top: the tabs (Watchlist, Movies); icon-only glass buttons at the right (Search, Surprise me, Live TV, HDMI Inputs,
+ *    Settings) and the crypto quotes under them;
  *  - three picks for this hour in the selected tab; the background is the first one's photo, blurred and almost white;
  *  - the glass shelf with the apps; ↓ opens the drawer (inputs, shortcuts, weather, prices); ↑ or Back closes it;
  *  - a night look from sunset to sunrise; a screensaver after a few idle minutes.
@@ -315,7 +315,7 @@
 
   // MARK: - Focus
 
-  var Z = {TOP: 'top', CARDS: 'cards', SHELF: 'shelf', DRAWER: 'drawer', APPS: 'apps', SETTINGS: 'settings', EDIT: 'edit', LANG: 'lang', CITY: 'city', KEY: 'key', ABOUT: 'about'};
+  var Z = {TOP: 'top', CARDS: 'cards', SHELF: 'shelf', DRAWER: 'drawer', APPS: 'apps', SETTINGS: 'settings', EDIT: 'edit', LANG: 'lang', CITY: 'city', KEY: 'key', ABOUT: 'about', SEARCH: 'search'};
   var st = {zone: Z.SHELF, top: 0, tab: 0, card: 0, shelf: 0, drawer: 0, grid: 0, row: 0, edit: 0, lang: 0, city: 0, key: 0};
   var cards = [];
 
@@ -331,6 +331,7 @@
     list = $('buttons').children;
     for (i = 0; i < list.length; i++) setClass(list[i], 'focus', st.zone === Z.TOP && st.top === TABS + i);
     setClass($('quotes'), 'hide', st.zone === Z.TOP && st.top >= TABS);
+    setClass($('search'), 'focus', st.zone === Z.SEARCH);
     layoutCards();
     list = $('cards').children;
     for (i = 0; i < list.length; i++) setClass(list[i], 'focus', st.zone === Z.CARDS && st.card === i);
@@ -378,10 +379,9 @@
 
   // MARK: - Top: title, tabs, buttons, quotes
 
-  var TAB_KIND = ['watchlist', 'movie'], TABS = TAB_KIND.length;
+  var TAB_KIND = ['watchlist', 'movie'], TABS = TAB_KIND.length, BUTTONS = 5;
 
   function renderTop() {
-    $('title').textContent = tr('For You');
     var tabs = $('tabs');
     tabs.innerHTML = '';
     var names = [tr('Watchlist'), tr('Movies')];
@@ -391,10 +391,10 @@
     }
     var buttons = $('buttons');
     buttons.innerHTML = '';
-    var defs = [['live_tv', tr('light|Live TV')], ['hdmi', tr('HDMI Inputs')], ['settings', tr('light|Settings')]];
-    for (var b = 0; b < 3; b++) {
-      var r = el('button', 'round' + (b === 2 ? ' last' : ''), buttons);
-      r.style.left = (1596 + 88 * b) + 'px';
+    var defs = [['search', tr('Search the watchlist')], ['sparkles', tr('Surprise me')], ['live_tv', tr('light|Live TV')], ['hdmi', tr('HDMI Inputs')], ['settings', tr('light|Settings')]];
+    for (var b = 0; b < BUTTONS; b++) {
+      var r = el('button', 'round' + (b === BUTTONS - 1 ? ' last' : ''), buttons);
+      r.style.left = (1860 - 88 * (BUTTONS - b)) + 'px';
       sym(defs[b][0], r);
       el('div', 'tip', r, defs[b][1]);
       hover(r, Z.TOP, TABS + b);
@@ -414,7 +414,7 @@
   // MARK: - Picks and background
 
   function renderCards() {
-    var list = Data.picks(TAB_KIND[st.tab]), posters = TAB_KIND[st.tab] === 'watchlist';
+    var posters = TAB_KIND[st.tab] === 'watchlist', list = searching ? Data.searchWatchlist(searchText()) : Data.picks(TAB_KIND[st.tab]);
     var holder = $('cards');
     setClass(body, 'no-picks', !list.length);
     setClass(body, 'posters', posters);
@@ -440,13 +440,94 @@
       else card.className += ' off';
       el('div', 'name', card, p.title);
       if (p.meta) el('div', 'meta', card, p.meta);
+      if (posters) el('div', 'fit', card);
+      if (posters && p.trailer && TV.name !== 'tizen') el('div', 'hint', card, tr('Hold OK for the trailer'));
       hover(card, Z.CARDS, c);
     }
     st.card = Math.min(st.card, Math.max(0, list.length - 1));
     if (!list.length && st.zone === Z.CARDS) st.zone = Z.SHELF;
     backdrop(list.length ? Data.image(list[posters ? st.card : 0].backdrop, 'w300') : '');
     updateFocus();
-    if (posters) revealPosters(holder);
+    if (posters) { renderFits(); revealPosters(holder); }
+  }
+
+  /** "Ends 23:41" under each poster that ends before the hour set in Home Settings (Ends before), from 6 hours before it. */
+  function renderFits() {
+    var nodes = $('cards').querySelectorAll('.fit'), t = Date.now(), limit = endsLimit(t);
+    for (var i = 0; i < nodes.length && i < cards.length; i++) {
+      var end = t + (cards[i].runtime || 0) * 60000, fits = limit && cards[i].runtime && end <= limit;
+      nodes[i].textContent = fits ? trf('Ends {time}', {time: formatDate('format|h:mm a', end)}) : '';
+    }
+  }
+
+  /** The next time it's the Ends before hour, when that's within 6 hours (earlier, every film would fit), or 0. */
+  function endsLimit(t) {
+    var by = Prefs.endsBy();
+    if (by < 0) return 0;
+    var limit = new Date(t);
+    limit.setHours(by, 0, 0, 0);
+    if (limit.getTime() <= t) limit.setDate(limit.getDate() + 1);
+    return limit.getTime() - t <= 6 * 3600000 ? limit.getTime() : 0;
+  }
+
+  // MARK: - Search: typed with the TV's keyboard, the watchlist row shows the films that match as you type
+
+  var searching = false;
+
+  function searchText() { return fieldOf('search').value; }
+
+  function startSearch() {
+    if (st.tab !== 0) selectTab(0);
+    searching = true;
+    fieldOf('search').value = '';
+    fieldOf('search').placeholder = tr('Search the watchlist');
+    setClass(body, 'searching', true);
+    renderCards();
+    focusSearch();
+  }
+
+  function focusSearch() {
+    st.zone = Z.SEARCH;
+    updateFocus();
+    openField('search');
+  }
+
+  /** Back to the whole watchlist, focus on the Search button. */
+  function endSearch() {
+    closeField('search');
+    searching = false;
+    setClass(body, 'searching', false);
+    st.zone = Z.TOP;
+    st.top = TABS;
+    st.card = 0;
+    renderCards();
+  }
+
+  /** Done on the keyboard: onto the first film found (or still typing when none). */
+  function leaveSearchField() {
+    closeField('search');
+    if (cards.length) { st.zone = Z.CARDS; st.card = 0; updateFocus(); }
+    else { toast(tr('No films in your watchlist match')); focusSearch(); }
+  }
+
+  fieldOf('search').oninput = function () { st.card = 0; renderCards(); };
+
+  /** A random film from the watchlist posters that's included or free on the TV's apps, with focus on it. */
+  function surprise() {
+    if (st.tab !== 0) selectTab(0);
+    var choices = [];
+    for (var i = 0; i < cards.length; i++) if (Data.usable(cards[i].app) && !cards[i].paid) choices.push(i);
+    if (!choices.length) { toast(tr('Nothing on your apps to pick from yet')); return; }
+    st.zone = Z.CARDS;
+    st.card = choices[Math.floor(Math.random() * choices.length)];
+    updateFocus();
+    toast(trf('How about {film}?', {film: cards[st.card].title}));
+  }
+
+  function playTrailer() {
+    var p = cards[st.card];
+    if (!p || !p.trailer) { toast(tr('No trailer for this one')); return; }
+    TV.trailer(p.trailer, function (ok) { if (!ok) toast(tr("Couldn't open the trailer")); });
   }
 
   /** The posters rise in one after another, then lose their delays so focus moves at once. */
@@ -540,6 +621,7 @@
   /** On the minute, so the clock never runs late (the 30-second refresh could, by up to 30 s). */
   function tickClock() {
     renderClock();
+    if (TAB_KIND[st.tab] === 'watchlist') renderFits();
     setTimeout(tickClock, 60000 - Date.now() % 60000 + 50);
   }
 
@@ -784,6 +866,8 @@
         step: function (d) { cycle('theme', ['auto', 'light', 'dark'], theme, d); checkNight(); }},
       {label: tr('Picks per tab'), value: String(Prefs.cards()),
         step: function (d) { Prefs.set('cards', 3 + (Prefs.cards() - 3 + (d || 1) + 4) % 4); renderCards(); }},
+      {label: tr('Ends before'), value: Prefs.endsBy() < 0 ? tr('Off') : formatDate('format|h:mm a', new Date(2000, 0, 1, Prefs.endsBy()).getTime()),
+        step: function (d) { cycle('endsBy', ENDS_BY, Prefs.endsBy(), d); renderFits(); }},
       {label: tr('Watch from the screensaver'), toggle: Prefs.saverWatch(),
         step: function () { Prefs.set('saverWatch', !Prefs.saverWatch()); }},
       {label: tr('Weather widget'), toggle: Prefs.weather(),
@@ -823,6 +907,8 @@
     if (TV.canOpenSettings) rows.push({label: tr('TV Settings'), value: '›', step: function (d) { if (d >= 0) tvSettings(); }});
     return rows;
   }
+
+  var ENDS_BY = [-1, 22, 23, 0, 1];
 
   function cycle(name, values, current, d) {
     var i = values.indexOf(current);
@@ -1284,9 +1370,14 @@
     switch (st.zone) {
       case Z.TOP:
         if (st.top < TABS) return;
-        if (st.top === TABS) { var live = liveTV(); if (live) launcher(live.id, tr('Live TV'))(); }
-        else if (st.top === TABS + 1) { st.zone = Z.SHELF; openDrawer(); st.drawer = 1 < drawerInputs ? 1 : 0; updateFocus(); }
+        if (st.top === TABS) startSearch();
+        else if (st.top === TABS + 1) surprise();
+        else if (st.top === TABS + 2) { var live = liveTV(); if (live) launcher(live.id, tr('Live TV'))(); }
+        else if (st.top === TABS + 3) { st.zone = Z.SHELF; openDrawer(); st.drawer = 1 < drawerInputs ? 1 : 0; updateFocus(); }
         else openSettings();
+        return;
+      case Z.SEARCH:
+        openField('search');
         return;
       case Z.CARDS:
         var p = cards[st.card], app = p && Data.appFor(p.app);
@@ -1325,6 +1416,7 @@
 
   function selectTab(i) {
     if (i === st.tab) return;
+    if (searching) endSearch();
     st.tab = i;
     st.card = 0;
     renderCards();
@@ -1341,14 +1433,19 @@
           else { st.zone = Z.TOP; st.top = Data.hasKey() ? st.tab : TABS; }
         }
         break;
+      case Z.SEARCH:
+        if (dy > 0) { leaveSearchField(); return; }
+        if (dy < 0) { st.zone = Z.TOP; st.top = TABS; }
+        break;
       case Z.CARDS:
         if (dx) st.card = Math.max(0, Math.min(cards.length - 1, st.card + dx));
+        else if (dy < 0 && searching) { focusSearch(); return; }
         else if (dy < 0) { st.zone = Z.TOP; st.top = st.tab; }
         else if (shelf.length) { st.zone = Z.SHELF; st.shelf = nearest(tiles, centerX(cardNodes[st.card])); }
         break;
       case Z.TOP:
         if (dx) {
-          st.top = Math.max(Data.hasKey() ? 0 : TABS, Math.min(TABS + 2, st.top + dx));   // without the picks the tabs can't hold focus
+          st.top = Math.max(Data.hasKey() ? 0 : TABS, Math.min(TABS + BUTTONS - 1, st.top + dx));   // without the picks the tabs can't hold focus
           if (st.top < TABS) selectTab(st.top);   // as on Apple TV: focusing a tab selects it
         } else if (dy > 0) {
           if (cards.length) { st.zone = Z.CARDS; st.card = Math.min(cards.length - 1, st.top < TABS ? 0 : cards.length - 1); }
@@ -1388,6 +1485,7 @@
   }
 
   function back() {
+    if (searching) { endSearch(); return; }
     if (st.zone === Z.EDIT) {
       setClass($('shelfedit'), 'open', false);
       openSettings();
@@ -1453,11 +1551,13 @@
     try { localStorage.setItem('fmtv.night', night ? 'true' : 'false'); } catch (e) {}   // for index.html, next start
   }
 
-  var saverOn = false, idleAt = Date.now(), saverIndex = 0, saverTimer = 0, saverPick = null, SAVER_AFTER = 5 * 60000;
+  var saverRun = 0, saverOn = false, idleAt = Date.now(), saverIndex = 0, saverTimer = 0, saverPick = null, SAVER_AFTER = 5 * 60000;
 
-  /** The screensaver's photos: picks with an app on the TV. */
+  /** The screensaver's photos: the watchlist's films on the TV's apps, or the picks when it has none yet. */
   function saverPhotos() {
-    return Data.showcase().filter(function (p) { return p.backdrop && Data.usable(p.app); });
+    function watchable(p) { return p.backdrop && Data.usable(p.app); }
+    var watchlist = Data.picks('watchlist').filter(watchable);
+    return watchlist.length ? watchlist : Data.showcase().filter(watchable);
   }
 
   function showSaver() {
@@ -1473,31 +1573,57 @@
     el('div', 'date', clock);
     el('div', 'title', clock);
     var hint = el('div', 'hint', clock);
-    var front = a;
-    function next() {
-      if (!saverOn) return;
-      var p = photos.length ? photos[saverIndex++ % photos.length] : null;
+    var front = a, run = ++saverRun, ready = null;
+    // Each photo is downloaded before it fades in, and the next one while this one shows: no blank screen between them.
+    function preload(p, done) {
+      var img = new Image(), url = Data.image(p.backdrop, 'original');
+      img.onload = function () { done(url); };
+      img.onerror = function () { done(null); };
+      img.src = url;
+    }
+    function show(p, url) {
+      if (!saverOn || run !== saverRun) return;
       var back = front === a ? b : a;
-      if (p) {
-        back.style.backgroundImage = 'url(' + Data.image(p.backdrop, 'original') + ')';
-        back.style.webkitTransform = back.style.transform = 'scale(1.0)';
-        clock.children[2].textContent = p.title;
-        saverPick = p;
-        // With Watch from the screensaver on, OK opens this title's app (any other key only closes).
-        var app = Prefs.saverWatch() && Data.appFor(p.app);
-        hint.textContent = app ? trf('Press OK to watch on {app}', {app: app.title}) : '';
-        setTimeout(function () {
-          setClass(back, 'on', true);
-          setClass(front, 'on', false);
-          back.style.webkitTransform = back.style.transform = 'scale(1.08) translateX(-1.5%)';
-          front = back;
-        }, 60);
-      }
+      back.style.backgroundImage = 'url(' + url + ')';
+      back.style.webkitTransform = back.style.transform = 'scale(1.0)';
+      saverPick = p;
+      swapText(clock, p);
+      setTimeout(function () {
+        setClass(back, 'on', true);
+        setClass(front, 'on', false);
+        back.style.webkitTransform = back.style.transform = 'scale(1.08) translateX(-1.5%)';
+        front = back;
+      }, 60);
+    }
+    function next() {
+      if (!saverOn || run !== saverRun) return;
       tickSaverClock(clock);
       saverTimer = setTimeout(next, 12000);
+      if (!photos.length) return;
+      var p = photos[saverIndex++ % photos.length], upcoming = photos[saverIndex % photos.length];
+      var shown = ready && ready.p === p ? ready : null;
+      ready = null;
+      function after(url) {
+        if (url) show(p, url);
+        preload(upcoming, function (u) { if (u) ready = {p: upcoming, url: u}; });
+      }
+      if (shown) after(shown.url); else preload(p, after);
     }
     setClass(s, 'on', true);
     next();
+  }
+
+  /** The film's name with its score, and the OK hint: faded out, changed, and faded back in with the photo. */
+  function swapText(clock, p) {
+    var title = clock.children[2], hint = clock.children[3];
+    // With Watch from the screensaver on, OK opens this title's app (any other key only closes).
+    var app = Prefs.saverWatch() && Data.appFor(p.app);
+    setClass(clock, 'swap', true);
+    setTimeout(function () {
+      title.textContent = p.rating ? p.title + '  ·  ' + Data.score(p.rating) : p.title;
+      hint.textContent = app ? trf('Press OK to watch on {app}', {app: app.title}) : '';
+      setClass(clock, 'swap', false);
+    }, 400);
   }
 
   function tickSaverClock(clock) {
@@ -1508,6 +1634,7 @@
 
   function hideSaver() {
     saverOn = false;
+    saverRun++;
     clearTimeout(saverTimer);
     setClass($('saver'), 'on', false);
   }
@@ -1531,11 +1658,32 @@
     else if (k === TV.keys.right) move(1, 0);
     else if (k === TV.keys.up) move(0, -1);
     else if (k === TV.keys.down) move(0, 1);
-    else if (k === TV.keys.ok) activate();
+    else if (k === TV.keys.ok) okDown();
     else if (k === TV.keys.back || k === 27 || k === 8) back();
     else return;
     e.preventDefault();
   });
+  document.addEventListener('keyup', function (e) { if (e.keyCode === TV.keys.ok) okUp(); });
+
+  // On a watchlist poster, OK opens its app on release and holding it plays the trailer. The remote repeats keydown
+  // while held, so only the first one counts.
+  var okHeld = false, holdTimer = 0, HOLD_MS = 600;
+
+  function okDown() {
+    if (st.zone !== Z.CARDS || TAB_KIND[st.tab] !== 'watchlist') { activate(); return; }
+    if (okHeld) return;
+    okHeld = true;
+    holdTimer = setTimeout(function () { holdTimer = 0; playTrailer(); }, HOLD_MS);
+  }
+
+  function okUp() {
+    if (!okHeld) return;
+    okHeld = false;
+    if (!holdTimer) return;
+    clearTimeout(holdTimer);
+    holdTimer = 0;
+    activate();
+  }
   document.addEventListener('mousemove', function () { poke(); });
 
   /**
@@ -1543,6 +1691,12 @@
    * its Cancel or ↑ ↓ leave the field. Samsung's keyboard sends Done as 65376 and Cancel as 65385. True: handled here.
    */
   function typing(k) {
+    if (st.zone === Z.SEARCH && typingIn('search')) {
+      if (k === TV.keys.ok || k === 65376 || k === TV.keys.down) leaveSearchField();
+      else if (k === TV.keys.back || k === 27 || k === 65385) endSearch();
+      else if (k === TV.keys.up) { closeField('search'); st.zone = Z.TOP; st.top = TABS; updateFocus(); }
+      return true;
+    }
     var sheet = st.zone === Z.CITY ? 'citypick' : st.zone === Z.KEY ? 'keypick' : '';
     if (!sheet || !typingIn(sheet)) return false;
     if (k === TV.keys.ok || k === 65376) { if (st.zone === Z.CITY) searchCity(); else saveKey(); }
