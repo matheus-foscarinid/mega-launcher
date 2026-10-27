@@ -324,6 +324,12 @@ var Data = (function () {
     return null;
   }
 
+  function named(s, n) {
+    if (s[0] === 'max') return /\bmax\b/.test(n);
+    if (s[1] === 'prime') return n.indexOf('prime video') >= 0 || n === 'amazon video';   // rentals, in the same app
+    return n.indexOf(s[0]) >= 0;
+  }
+
   /** "… Amazon Channel" is sold inside another app; Apple TV is only the streaming service (350; 2 is the store). */
   function service(providerName, providerId) {
     var n = (providerName || '').toLowerCase();
@@ -331,7 +337,7 @@ var Data = (function () {
     for (var i = 0; i < SERVICES.length; i++) {
       var s = SERVICES[i];
       if (s[1] === 'appletv' && providerId !== 350) continue;
-      if (s[0] === 'max' ? /\bmax\b/.test(n) : n.indexOf(s[0]) >= 0) return s;
+      if (named(s, n)) return s;
     }
     return null;
   }
@@ -665,12 +671,13 @@ var Data = (function () {
   var FILMS_VERSION = 2;
   var saved = stored('watchlist') || {};
   if (saved.user !== LB_USER || saved.version !== FILMS_VERSION) saved = {};
-  var films = saved.films || [], filmsAt = saved.at || 0, filmsStamp = saved.stamp || '', fetchingFilms = false, filmsFailedAt = 0;
+  // the stamp isn't read back, so each start works out the offers again: an update that reads them better shows at once
+  var films = saved.films || [], filmsAt = saved.at || 0, filmsStamp = '', fetchingFilms = false, filmsFailedAt = 0;
 
   var LIST_EVERY = 6 * 3600000, LIST_RETRY = 10 * 60000, FILM_EVERY = 3 * 86400000, FILM_RETRY = 3600000, MAX_PAGES = 50;
   var WATCHLIST_CARDS = 30;
 
-  function saveFilms() { store('watchlist', {user: LB_USER, version: FILMS_VERSION, at: filmsAt, stamp: filmsStamp, films: films}); }
+  function saveFilms() { store('watchlist', {user: LB_USER, version: FILMS_VERSION, at: filmsAt, films: films}); }
 
   /** Where a film is best watched here: on an app the TV has, included or free first, then to rent or buy. */
   function offer(here) {
