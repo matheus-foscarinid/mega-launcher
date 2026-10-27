@@ -3,7 +3,8 @@
  *  - one call to the TV's remote control API (127.0.0.1:3000). Newer webOS gives each app's page its own origin
  *    (file://io.freemytv-webos), and the API closes any connection that isn't from file:// ("invalid origin"); from
  *    here the handshake says file://.
- *  - a page of a public Letterboxd watchlist, which Letterboxd serves without CORS.
+ *  - a page of a public Letterboxd watchlist, which Letterboxd serves without CORS;
+ *  - the TMDB ids of the movies on the person's Plex server (plex_url), which the page can't ask for itself.
  * Plain ES5 with Node's built-in modules only: older webOS ships an old Node.
  */
 var net = require('net');
@@ -142,6 +143,67 @@ service.register('watchlist', function (message) {
     if (err) { message.respond({returnValue: false, errorText: err}); return; }
     var list = parseWatchlist(html);
     message.respond({returnValue: true, films: list.films, pages: list.pages});
+  });
+});
+
+/** done(error, json) for one Plex API path, with the token in a header (never in the URL). */
+function plexGet(server, token, path, done) {
+  var m = /^https:\/\/([a-z0-9.-]+):(\d+)$/.exec(server), finished = false;
+  function finish(err, json) {
+    if (finished) return;
+    finished = true;
+    done(err, json);
+  }
+  var req = https.get({host: m[1], port: +m[2], path: path, headers: {Accept: 'application/json', 'X-Plex-Token': token}},
+      function (res) {
+        if (res.statusCode !== 200) { res.resume(); finish('HTTP ' + res.statusCode); return; }
+        var chunks = [];
+        res.on('data', function (c) { chunks.push(c); });
+        res.on('end', function () {
+          var json = null;
+          try { json = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (e) {}
+          finish(json ? null : 'bad answer', json);
+        });
+      });
+  req.setTimeout(30000, function () { req.abort(); finish('timeout'); });
+  req.on('error', function (e) { finish(e.message || 'no connection'); });
+}
+
+/** {tmdb id: Plex ratingKey} for every movie in the server's movie libraries. */
+function plexMovies(server, token, done) {
+  plexGet(server, token, '/library/sections', function (err, json) {
+    if (err) { done(err); return; }
+    var dirs = (json.MediaContainer && json.MediaContainer.Directory) || [], ids = {};
+    var sections = dirs.filter(function (d) { return d.type === 'movie'; });
+    (function next(i) {
+      if (i >= sections.length) { done(null, ids); return; }
+      plexGet(server, token, '/library/sections/' + encodeURIComponent(sections[i].key) + '/all?type=1&includeGuids=1',
+          function (e, list) {
+            if (e) { done(e); return; }
+            var items = (list.MediaContainer && list.MediaContainer.Metadata) || [];
+            for (var j = 0; j < items.length; j++) {
+              var guids = items[j].Guid || [];
+              for (var g = 0; g < guids.length; g++) {
+                var t = /^tmdb:\/\/(\d+)$/.exec(guids[g].id || '');
+                if (t) ids[t[1]] = items[j].ratingKey;
+              }
+            }
+            next(i + 1);
+          });
+    })(0);
+  });
+}
+
+service.register('plex', function (message) {
+  var p = message.payload || {}, server = String(p.server || ''), token = String(p.token || '');
+  // as on Android: only a plex.direct address over https, so a typo never sends the token anywhere else
+  if (!/^https:\/\/[a-z0-9-]+\.[a-f0-9]+\.plex\.direct:\d{2,5}$/.test(server) || !/^[A-Za-z0-9_-]{8,64}$/.test(token)) {
+    message.respond({returnValue: false, errorText: 'Bad Plex address or token'});
+    return;
+  }
+  plexMovies(server, token, function (err, ids) {
+    if (err) message.respond({returnValue: false, errorText: err});
+    else message.respond({returnValue: true, ids: ids});
   });
 });
 

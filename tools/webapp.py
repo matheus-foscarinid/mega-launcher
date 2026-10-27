@@ -15,7 +15,7 @@ import translate  # noqa: E402  (the catalogues and the keys the web app uses)
 
 GENERIC = {'tmdbKey': '', 'tmdbRegion': '', 'latitude': '', 'longitude': '', 'city': '', 'language': 'auto',
            'currency': '', 'temperature': 'auto', 'theme': 'auto', 'showCrypto': True, 'hideAnimation': False, 'hideApps': [],
-           'shelfApps': [], 'drawerFirst': False, 'letterboxdUser': ''}
+           'shelfApps': [], 'drawerFirst': False, 'letterboxdUser': '', 'plexUrl': '', 'plexToken': ''}
 
 
 def config_from_args(args):
@@ -67,6 +67,8 @@ def read_config(path):
         'shelfApps': [s.strip() for s in values.get('shelf_apps', '').split(',') if s.strip()],
         'drawerFirst': values.get('drawer_first', 'false').lower() == 'true',
         'letterboxdUser': values.get('letterboxd_user', '').strip(),
+        'plexUrl': values.get('plex_url', '').strip().rstrip('/'),
+        'plexToken': values.get('plex_token', '').strip(),
     }
 
 

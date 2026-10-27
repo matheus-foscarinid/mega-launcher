@@ -527,6 +527,21 @@ var TV = (function () {
       });
     },
 
+    /** The movies on the person's Plex server: done({tmdb id: ratingKey}), or null. LG only, through our JS service. */
+    plexMovies: function (server, token, done) {
+      if (!webos) { setTimeout(function () { done(null); }, 0); return; }
+      luna('luna://' + self + '.service/plex', {server: server, token: token}, function (res) {
+        done(res && res.ids ? res.ids : null);
+      });
+    },
+
+    /** Plays a YouTube video in LG's YouTube app; done(ok). */
+    trailer: function (youtubeId, done) {
+      if (!webos) { setTimeout(function () { done(!samsung); }, 0); return; }
+      luna('luna://com.webos.applicationManager/launch', {id: 'youtube.leanback.v4', params: {contentTarget: 'v=' + youtubeId}},
+          function (res) { done(!!res); });
+    },
+
     /** The TV's own settings; done(ok). */
     settings: function (done) {
       if (samsung) samsungSettings(done);
