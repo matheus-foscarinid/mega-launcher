@@ -210,7 +210,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .night .round.focus { background: #FFF; color: #1D1D1F; }
 .night .round.focus .tip { color: #F5F5F7; }
 
-/* MARK: - Picks: the card with focus is wide, the others narrow (posters); it grows 5%, rises and its edge lights up. */
+/* MARK: - Picks: one row of posters, the focused one grows and its edge lights up. */
 
 #cards {
   position: absolute;
@@ -251,12 +251,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   background-size: cover;
   background-position: center;
 }
-.card .back {
-  opacity: 0;
-  -webkit-transition: opacity 0.3s;
-  transition: opacity 0.3s;
-}
-.card.wide .back { opacity: 1; }
 .card .badge {
   position: absolute;
   right: 14px;
@@ -354,7 +348,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   -webkit-transition: opacity 0.3s;
   transition: opacity 0.3s;
 }
-.card.wide .meta { opacity: 1; }
 .card.edge .name, .card.edge .meta { visibility: hidden; }
 .night .card .img { background-color: #2C2C2E; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32); }
 .night .card .name { color: #F5F5F7; }

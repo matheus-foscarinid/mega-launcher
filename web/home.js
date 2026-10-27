@@ -339,7 +339,7 @@
     for (i = 0; i < list.length; i++) setClass(list[i], 'focus', st.zone === Z.TOP && st.top === TABS + i);
     setClass($('quotes'), 'hide', st.zone === Z.TOP && st.top >= TABS);
     setClass($('search'), 'focus', st.zone === Z.SEARCH);
-    layoutCards();
+    layoutPosters();
     list = $('cards').children;
     for (i = 0; i < list.length; i++) setClass(list[i], 'focus', st.zone === Z.CARDS && st.card === i);
     list = $('tiles').children;
@@ -390,7 +390,6 @@
   var TAB_KIND = Data.hasWatchlist() ? ['watchlist', 'movie'] : ['movie'], TABS = TAB_KIND.length;
   var topButtons = [];
 
-  function isWatchlistTab() { return TAB_KIND[st.tab] === 'watchlist'; }
 
   /** The round buttons at the top right: what each shows and does. Search and Surprise me need the watchlist. */
   function topButtonList() {
@@ -450,10 +449,9 @@
   // MARK: - Picks and background
 
   function renderCards() {
-    var posters = isWatchlistTab(), list = searching ? Data.searchWatchlist(searchText()) : Data.picks(TAB_KIND[st.tab]);
+    var list = searching ? Data.searchWatchlist(searchText()) : Data.picks(TAB_KIND[st.tab]);
     var holder = $('cards');
     setClass(body, 'no-picks', !list.length);
-    setClass(body, 'posters', posters);
     setClass(body, 'no-key', !Data.hasKey());   // as on Android: no title or tabs that could never show anything
     if (!Data.hasKey() && st.zone === Z.TOP && st.top < TABS) st.top = TABS;
     var same = list.length === cards.length;
@@ -462,30 +460,28 @@
     cards = list;
     holder.innerHTML = '';
     for (var c = 0; c < list.length; c++) {
-      var p = list[c], card = el('div', 'card' + (posters ? ' enter' : ''), holder);
+      var p = list[c], card = el('div', 'card enter', holder);
       var img = el('div', 'img', card);
-      // Narrow: the poster (the backdrop cropped without one); the wide card fades its backdrop in over it, loaded then.
-      // The watchlist's posters load as they come into view (layoutCards), large enough to stay sharp when focused.
-      var poster = el('div', 'layer', img);
-      if (posters) card.setAttribute('data-poster', p.poster ? Data.image(p.poster, 'w500') : Data.image(p.backdrop, 'w780'));
-      else poster.style.backgroundImage = 'url(' + (p.poster ? Data.image(p.poster, 'w342') : Data.image(p.backdrop, 'w780')) + ')';
-      el('div', 'layer back', img);
-      if (posters && c < POSTERS_VISIBLE) card.style.webkitTransitionDelay = card.style.transitionDelay = c * 45 + 'ms';
+      // the posters load as they come into view (layoutPosters), large enough to stay sharp when focused
+      el('div', 'layer', img);
+      card.setAttribute('data-poster', p.poster ? Data.image(p.poster, 'w500') : Data.image(p.backdrop, 'w780'));
+      if (c < POSTERS_VISIBLE) card.style.webkitTransitionDelay = card.style.transitionDelay = c * 45 + 'ms';
       var app = Data.usable(p.app) ? Data.appFor(p.app) : null;
       if (app) face(app, el('div', 'badge', img), app.title.length > 8 ? 8 : 11);
       else card.className += ' off';
       el('div', 'name', card, p.title);
       if (p.meta) el('div', 'meta', card, p.meta);
-      var more = posters ? el('div', 'more', card) : null;
-      if (more) el('span', 'fit', more);
-      if (more && p.trailer && TV.name !== 'tizen') el('span', 'hint', more, tr('Hold OK for the trailer'));
+      var more = el('div', 'more', card);
+      el('span', 'fit', more);
+      if (p.trailer && TV.name !== 'tizen') el('span', 'hint', more, tr('Hold OK for the trailer'));
       hover(card, Z.CARDS, c);
     }
     st.card = Math.min(st.card, Math.max(0, list.length - 1));
     if (!list.length && st.zone === Z.CARDS) st.zone = Z.SHELF;
-    backdrop(list.length ? Data.image(list[posters ? st.card : 0].backdrop, 'w780') : '');
+    backdrop(list.length ? Data.image(list[st.card].backdrop, 'w780') : '');
     updateFocus();
-    if (posters) { renderFits(); revealPosters(holder); }
+    renderFits();
+    revealPosters(holder);
   }
 
   /** "Ends 23:41" under each poster that ends before the hour set in Home Settings (Ends before), from 6 hours before it. */
@@ -586,33 +582,10 @@
     }, 30);
   }
 
-  /**
-   * The card with focus (st.card, also while focus is elsewhere) is the wide one, the others narrow; past the third the
-   * row scrolls a card at a time (the holder slides), and the cards at the edges lose their text. Only the holder's
-   * transform and the backdrop's opacity animate: the widths change at once (older TVs).
-   */
-  function layoutCards() {
-    if (isWatchlistTab()) { layoutPosters(); return; }
-    var holder = $('cards'), nodes = holder.children, left = 80, scroll = Math.max(0, st.card - 2) * 360;
-    for (var i = 0; i < nodes.length; i++) {
-      var wide = i === st.card, w = wide ? 1040 : 320, n = nodes[i], at = left - scroll;
-      n.style.left = left + 'px';
-      n.style.width = w + 'px';
-      setClass(n, 'wide', wide);
-      setClass(n, 'edge', at < 0 || at > 1740);
-      if (wide && !n.getAttribute('data-back') && cards[i]) {
-        n.setAttribute('data-back', '1');
-        n.querySelector('.back').style.backgroundImage = 'url(' + Data.image(cards[i].backdrop, 'w1280') + ')';
-      }
-      left += w + 40;
-    }
-    holder.style.webkitTransform = holder.style.transform = 'translateX(' + (-scroll) + 'px)';
-  }
-
   var POSTER_W = 284, POSTER_GAP = 40, POSTERS_VISIBLE = 5, ROW_LEFT = 80, ROW_RIGHT = 1840, POSTERS_AHEAD = 2;
 
   /**
-   * The watchlist: one row of posters at the same size, the focused one scaled up (never resized, so it isn't
+   * One row of posters at the same size, the focused one scaled up (never resized, so it isn't
    * stretched). The row slides to keep focus near the middle, and the background follows the focused film.
    */
   function layoutPosters() {
@@ -622,7 +595,6 @@
       var n = nodes[i], at = ROW_LEFT + i * step - scroll;
       n.style.left = ROW_LEFT + i * step + 'px';
       n.style.width = POSTER_W + 'px';
-      setClass(n, 'wide', false);
       setClass(n, 'edge', at < 0 || at > ROW_RIGHT - POSTER_W);
       if (i >= first - POSTERS_AHEAD && i < first + POSTERS_VISIBLE + POSTERS_AHEAD) loadPoster(n);
     }
@@ -717,7 +689,7 @@
   /** On the minute, so the clock never runs late (the 30-second refresh could, by up to 30 s). */
   function tickClock() {
     renderClock();
-    if (isWatchlistTab()) renderFits();
+    renderFits();
     setTimeout(tickClock, 60000 - Date.now() % 60000 + 50);
   }
 
@@ -1508,7 +1480,6 @@
   /** Down from the tabs: the first card. From a button: the poster under it, or the last of a short row. */
   function cardBelow() {
     if (st.top < TABS) return 0;
-    if (!isWatchlistTab()) return cards.length - 1;
     return nearest($('cards').children, centerX($('buttons').children[st.top - TABS]));
   }
 
@@ -1752,12 +1723,12 @@
   });
   document.addEventListener('keyup', function (e) { if (e.keyCode === TV.keys.ok) okUp(); });
 
-  // On a watchlist poster, OK opens its app on release and holding it plays the trailer. The remote repeats keydown
+  // On a poster, OK opens its app on release and holding it plays the trailer. The remote repeats keydown
   // while held, so only the first one counts. YouTube takes the release, so leaving the app clears the hold too.
   var hold = {down: false, fired: false, timer: 0}, HOLD_MS = 600;
 
   function okDown() {
-    if (st.zone !== Z.CARDS || !isWatchlistTab()) { activate(); return; }
+    if (st.zone !== Z.CARDS) { activate(); return; }
     if (hold.down) return;
     var card = cards[st.card];
     hold.down = true;
