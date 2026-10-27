@@ -3,6 +3,7 @@
  *  - the picks: what's trending this week and recent releases, only from the streaming apps on this TV (TMDB, with
  *    the person's own free key from config.properties), 3 per hour (up to 6 in Home Settings);
  *  - the Letterboxd watchlist (letterboxd_user, LG only), with where each film streams (every 6 h, offers every 3 days);
+ *  - for films on Netflix, Netflix's own id from Wikidata, so OK opens the film's page (LG's Netflix takes it);
  *  - weather, sunrise and sunset (Open-Meteo, every 30 min) and optional crypto prices (Binance, every 5 min).
  * Settings changed on the TV (Prefs) win over config.properties, as on Android. Built without a city (--generic), the
  * TV's time zone gives the city, and its country the currency and the region (zones.js).
@@ -468,10 +469,34 @@ var Data = (function () {
       if (p.service && p.app) parts.push(p.service);
       p.meta = parts.join(' · ');
       title(p, o, function () {
-        p.detailed = true;
-        done(null);
+        findNetflixId(p, function () {
+          p.detailed = true;
+          done(null);
+        });
       });
     });
+  }
+
+  var WIKIDATA = 'https://query.wikidata.org/sparql?format=json&query=';
+
+  /**
+   * Netflix's id for a film on Netflix, which TMDB doesn't have, from Wikidata (by its TMDB id): with it, OK opens the
+   * film's page in Netflix instead of Netflix's home. done() either way; '' when Wikidata has none.
+   */
+  function findNetflixId(p, done) {
+    if (p.app !== 'netflix' || p.netflixId !== undefined || !/^\d+$/.test(String(p.id))) { done(); return; }
+    var query = 'SELECT ?n WHERE { ?f wdt:P4947 "' + p.id + '"; wdt:P1874 ?n } LIMIT 1';
+    get(WIKIDATA + encodeURIComponent(query), {}, function (err, res) {
+      var hit = !err && res.results && res.results.bindings[0];
+      if (!err) p.netflixId = hit && /^\d+$/.test(hit.n.value) ? hit.n.value : '';
+      done();
+    });
+  }
+
+  /** The launch params that open the film itself in its app, where the app takes them (LG's Netflix), or null. */
+  function deepLink(p) {
+    if (p && p.app === 'netflix' && p.netflixId) return {contentTarget: 'm=https://www.netflix.com/title/' + p.netflixId + '&source_type=4'};
+    return null;
   }
 
   /** The film's YouTube trailer id: an official one in the TV's language first, then any in English. */
@@ -708,7 +733,9 @@ var Data = (function () {
   }
 
   /** Where each film streams changes: looked up again after 3 days, or at once when the TV's apps change. */
-  function filmStale(f, t) { return !f.at || t - f.at > 3 * 86400000 || t < f.at || f.rating === undefined; }
+  function filmStale(f, t) {
+    return !f.at || t - f.at > 3 * 86400000 || t < f.at || f.rating === undefined || (f.app === 'netflix' && f.netflixId === undefined);
+  }
 
   // MARK: - Plex (plex_url, LG only)
 
@@ -812,6 +839,7 @@ var Data = (function () {
     showcase: all,
     /** "7.6/10": a TMDB score in the TV's number format. */
     searchWatchlist: searchWatchlist,
+    deepLink: deepLink,
     score: function (rating) { return trf('{score}/10', {score: fmt(rating, 1)}); },
     image: function (path, size) { return path ? 'https://image.tmdb.org/t/p/' + (size || 'w1280') + path : ''; },
 

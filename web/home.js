@@ -1386,9 +1386,9 @@
 
   // MARK: - Opening things
 
-  function launcher(id, name) {
+  function launcher(id, name, params) {
     return function () {
-      TV.launch(id, null, function (ok) {
+      TV.launch(id, params || null, function (ok) {
         if (!ok) toast(trf("Couldn't open {app}.", {app: name || id}));
       });
     };
@@ -1420,7 +1420,7 @@
         return;
       case Z.CARDS:
         var p = cards[st.card], app = p && Data.appFor(p.app);
-        if (app) launcher(app.id, app.title)();
+        if (app) launcher(app.id, app.title, Data.deepLink(p))();
         else if (p) toast(trf('{film} isn\'t on this TV\'s apps', {film: p.title}));
         return;
       case Z.SHELF:
@@ -1683,7 +1683,7 @@
     if (!saverOn) return false;
     var app = ok && saverPick && Prefs.saverWatch() && Data.appFor(saverPick.app);
     hideSaver();
-    if (app) launcher(app.id, app.title)();
+    if (app) launcher(app.id, app.title, Data.deepLink(saverPick))();
     return true;
   }
 
