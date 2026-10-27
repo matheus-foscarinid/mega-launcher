@@ -237,12 +237,15 @@
     for (var i = 0; i < imgs.length; i++) if (imgs[i].complete) fitLogo(imgs[i]);
   }
 
+  /** A logo fades in once it has its final size: never the raw icon first, then stretched into place. */
+  function reveal(img) { img.style.opacity = ''; }
+
   /** own: the tile has the TV's color for the app, not one of SHELF's. */
   function showLogo(img, box, top, bottom, logo, own) {
     img.className = 'logo';
-    img.onload = function () { img.onload = null; fitLogo(img); };
+    img.onload = function () { img.onload = null; fitLogo(img); reveal(img); };
     img.src = logo.src;
-    if (img.complete) fitLogo(img);
+    if (img.complete) { fitLogo(img); reveal(img); }
     var a = rgbOf(top), z = rgbOf(bottom);
     var tileLum = (luminance(a[0], a[1], a[2]) + luminance(z[0], z[1], z[2])) / 2;
     // The tile takes the icon's background when the logo only reads on it, and when that background is the brand's
@@ -264,6 +267,7 @@
     if (wordSize) word.style.fontSize = wordSize + 'px';
     if (app.icon) {
       var img = el('img', '', box), url = app.icon;
+      img.style.opacity = '0';
       word.style.visibility = 'hidden';
       img.onerror = function () { if (img.parentNode) img.parentNode.removeChild(img); word.style.visibility = ''; };
       if (lifted[url]) { showLogo(img, box, top, bottom, lifted[url], !k); return; }
@@ -272,7 +276,10 @@
           img.onload = null;
           if (lifted[url] === undefined) lifted[url] = lift(img);
           if (lifted[url]) showLogo(img, box, top, bottom, lifted[url], !k);
+          else reveal(img);
         };
+      } else {
+        img.onload = function () { reveal(img); };
       }
       img.src = url;
     }
@@ -440,13 +447,14 @@
       else card.className += ' off';
       el('div', 'name', card, p.title);
       if (p.meta) el('div', 'meta', card, p.meta);
-      if (posters) el('div', 'fit', card);
-      if (posters && p.trailer && TV.name !== 'tizen') el('div', 'hint', card, tr('Hold OK for the trailer'));
+      var more = posters ? el('div', 'more', card) : null;
+      if (more) el('span', 'fit', more);
+      if (more && p.trailer && TV.name !== 'tizen') el('span', 'hint', more, tr('Hold OK for the trailer'));
       hover(card, Z.CARDS, c);
     }
     st.card = Math.min(st.card, Math.max(0, list.length - 1));
     if (!list.length && st.zone === Z.CARDS) st.zone = Z.SHELF;
-    backdrop(list.length ? Data.image(list[posters ? st.card : 0].backdrop, 'w300') : '');
+    backdrop(list.length ? Data.image(list[posters ? st.card : 0].backdrop, 'w780') : '');
     updateFocus();
     if (posters) { renderFits(); revealPosters(holder); }
   }
@@ -563,7 +571,7 @@
     holder.style.webkitTransform = holder.style.transform = 'translateX(' + (-scroll) + 'px)';
   }
 
-  var POSTER_W = 250, POSTER_GAP = 36, POSTERS_VISIBLE = 6;
+  var POSTER_W = 284, POSTER_GAP = 40, POSTERS_VISIBLE = 5;
 
   /**
    * The watchlist: one row of posters at the same size, the focused one scaled up (never resized, so it isn't
@@ -585,31 +593,62 @@
       }
     }
     holder.style.webkitTransform = holder.style.transform = 'translateX(' + (-scroll) + 'px)';
-    if (cards[st.card]) backdrop(Data.image(cards[st.card].backdrop, 'w300'));
+    if (cards[st.card]) backdrop(Data.image(cards[st.card].backdrop, 'w780'));
+    for (var k = st.card - 1; k <= st.card + 1; k++) if (cards[k] && k !== st.card) bgImage(Data.image(cards[k].backdrop, 'w780'));
   }
 
-  var bgUrl = null, bgFront = 'bgA';
+  var bgUrl = null, bgFront = 'bgA', bgTimer = 0, bgImages = {}, BG_SETTLE = 220;
 
-  /** The first pick's photo as the background: drawn tiny and stretched, it's already as soft as a heavy blur. */
+  /** A photo, downloaded once and kept for when focus comes back to its film; done(img) once it has loaded. */
+  function bgImage(url, done) {
+    var img = bgImages[url];
+    if (img && img.complete && img.naturalWidth) { if (done) done(img); return; }
+    if (!img) {
+      img = bgImages[url] = new Image();
+      img.onerror = function () { delete bgImages[url]; };
+    }
+    if (done) img.addEventListener('load', function () { done(img); });
+    if (!img.src) img.src = url;
+  }
+
+  /**
+   * The picked film's photo, blurred, as the background. It changes only once focus rests (moving along the row only
+   * crossfades to the film it stops on), and each photo fades in only once it's downloaded.
+   */
   function backdrop(url) {
     if (url === bgUrl) return;
     bgUrl = url;
-    var next = bgFront === 'bgA' ? 'bgB' : 'bgA';
+    clearTimeout(bgTimer);
     if (!url) {
       setClass($('bgA'), 'on', false);
       setClass($('bgB'), 'on', false);
       return;
     }
-    var img = new Image();
-    img.onload = function () {
-      if (bgUrl !== url) return;
-      var canvas = $(next), ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      setClass(canvas, 'on', true);
-      setClass($(bgFront), 'on', false);
-      bgFront = next;
-    };
-    img.src = url;
+    bgTimer = setTimeout(function () {
+      bgImage(url, function (img) {
+        if (bgUrl !== url) return;
+        var next = bgFront === 'bgA' ? 'bgB' : 'bgA';
+        drawSoft($(next), img);
+        setClass($(next), 'on', true);
+        setClass($(bgFront), 'on', false);
+        bgFront = next;
+      });
+    }, BG_SETTLE);
+  }
+
+  /** The photo blurred into the canvas: with the canvas's own blur where the TV has it, else drawn small and scaled up. */
+  function drawSoft(canvas, img) {
+    var ctx = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    if ('filter' in ctx) {
+      ctx.filter = 'blur(5px)';
+      ctx.drawImage(img, -12, -12, w + 24, h + 24);   // past the edges, so the blur doesn't fade them to clear
+      ctx.filter = 'none';
+      return;
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(img, 0, 0, w / 4, h / 4);
+    ctx.drawImage(canvas, 0, 0, w / 4, h / 4, 0, 0, w, h);
   }
 
   function renderClock() {

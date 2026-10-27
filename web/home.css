@@ -57,13 +57,13 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #sky .grad { position: absolute; left: 0; top: 0; width: 100%; height: 100%; -webkit-transition: opacity 2s; transition: opacity 2s; }
 #sky .day { background: -webkit-linear-gradient(top, #F5F5F7, #E2E2E7); background: linear-gradient(#F5F5F7, #E2E2E7); }
 #sky .night { background: -webkit-linear-gradient(top, #1C1C1E, #0B0B0D); background: linear-gradient(#1C1C1E, #0B0B0D); opacity: 0; }
-#sky canvas { position: absolute; left: -4%; top: -4%; width: 108%; height: 108%; opacity: 0; -webkit-transition: opacity 0.8s; transition: opacity 0.8s; }
+#sky canvas { position: absolute; left: -4%; top: -4%; width: 108%; height: 108%; opacity: 0; -webkit-transition: opacity 1.1s ease-in-out; transition: opacity 1.1s ease-in-out; }
 #sky canvas.on { opacity: 1; }
-#sky .veil { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: rgba(245, 245, 247, 0.74); -webkit-transition: background-color 2s; transition: background-color 2s; }
+#sky .veil { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: rgba(245, 245, 247, 0.62); -webkit-transition: background-color 2s; transition: background-color 2s; }
 #sky .lift { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: #FFF; opacity: 0; -webkit-transition: opacity 0.45s, background-color 2s; transition: opacity 0.45s, background-color 2s; }
 .night #sky .day { opacity: 0; }
 .night #sky .night { opacity: 1; }
-.night #sky .veil { background: rgba(11, 11, 13, 0.78); }
+.night #sky .veil { background: rgba(11, 11, 13, 0.7); }
 .night #sky .lift { background: #000; }
 .drawer-open #sky .lift { opacity: 0.32; }
 .night.drawer-open #sky .lift { opacity: 0.42; }
@@ -216,8 +216,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   position: absolute;
   left: 0;
   top: 0;
-  -webkit-transition: -webkit-transform 0.32s cubic-bezier(0.2, 0.9, 0.3, 1);
-  transition: transform 0.32s cubic-bezier(0.2, 0.9, 0.3, 1);
+  -webkit-transition: -webkit-transform 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .card {
@@ -275,34 +275,33 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .card .badge img.logo { width: 72%; height: 52%; max-width: none; max-height: none; object-fit: contain; }
 .card .badge .word { position: absolute; left: 3px; right: 3px; top: 50%; margin-top: -7px; line-height: 14px; text-align: center; font-weight: 700; white-space: nowrap; overflow: hidden; color: #FFF; }
 .posters .card {
-  top: 210px;
-  height: 375px;
-  -webkit-transition: -webkit-transform 0.34s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.34s ease-out;
-  transition: transform 0.34s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.34s ease-out;
+  top: 206px;
+  height: 426px;
+  -webkit-transition: -webkit-transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.42s ease-out;
+  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.42s ease-out;
 }
 .posters .card.enter { opacity: 0; -webkit-transform: translateY(28px); transform: translateY(28px); }
-.posters .card.focus { -webkit-transform: scale(1.1); transform: scale(1.1); }
+.posters .card.focus { -webkit-transform: scale(1.13); transform: scale(1.13); }
 .posters .card .img { border-radius: 14px; }
 .posters .card .img::after { border-radius: 14px; }
-.posters .card .name { top: 401px; font-size: 24px; font-weight: 500; color: #3A3A3C; }
+.posters .card .name { top: 448px; font-size: 24px; font-weight: 500; color: #3A3A3C; }
 .posters .card.focus .name { color: #1D1D1F; font-weight: 600; }
-.posters .card .meta { top: 435px; max-width: none; font-size: 21px; }
+.posters .card .meta { top: 482px; max-width: none; font-size: 21px; }
 .posters .card.focus .meta { opacity: 1; }
-.posters .card .fit, .posters .card .hint {
+.posters .card .more {
   position: absolute;
   left: 0;
-  top: 435px;
+  top: 482px;
   white-space: nowrap;
   font-size: 20px;
   font-weight: 500;
   color: #6E6E73;
-  -webkit-transition: opacity 0.3s;
-  transition: opacity 0.3s;
 }
-.posters .card.focus .fit { top: 467px; }
-.posters .card .hint { top: 499px; opacity: 0; }
-.posters .card.focus .hint { opacity: 1; }
-.night.posters .card .fit, .night.posters .card .hint { color: rgba(245, 245, 247, 0.55); }
+.posters .card.focus .more { top: 514px; }
+.posters .card .hint { display: none; }
+.posters .card.focus .hint { display: inline; }
+.posters .card .fit:not(:empty) + .hint::before { content: '  ·  '; white-space: pre; }
+.night.posters .card .more { color: rgba(245, 245, 247, 0.55); }
 .night.posters .card .name { color: rgba(245, 245, 247, 0.72); }
 .night.posters .card.focus .name { color: #F5F5F7; }
 .card.off .img { -webkit-filter: grayscale(1); filter: grayscale(1); opacity: 0.45; }
@@ -415,6 +414,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   -webkit-transition: -webkit-transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2), box-shadow 0.2s, opacity 0.3s;
   transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2), box-shadow 0.2s, opacity 0.3s;
 }
+.tile img, .cell .face img, .card .badge img { -webkit-transition: opacity 0.25s; transition: opacity 0.25s; }
 .tile img { position: absolute; left: 50%; top: 50%; max-width: 76%; max-height: 62%; -webkit-transform: translate(-50%, -50%); transform: translate(-50%, -50%); }
 /* a logo lifted off the TV's icon (home.js): as large as the tile allows */
 .tile img.logo { width: 70%; height: 50%; max-width: none; max-height: none; object-fit: contain; }
